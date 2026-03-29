@@ -32,6 +32,10 @@ def _header_struct(settings: ProtocolSettings) -> struct.Struct:
     return struct.Struct(f"{prefix}{frame_fmt}d{length_fmt}")
 
 
+def _other_byte_order(byte_order: str) -> str:
+    return "big" if byte_order == "little" else "little"
+
+
 @dataclass(slots=True)
 class PacketDecoder:
     settings: ProtocolSettings
@@ -44,8 +48,28 @@ class PacketDecoder:
         while len(self._buffer) >= header_struct.size:
             frame_header, sample_rate, payload_length = header_struct.unpack_from(self._buffer)
             if frame_header != self.settings.frame_header:
-                raise ValueError(
+                message = (
                     f"Unexpected frame header {frame_header:#x}, expected {self.settings.frame_header:#x}"
+                )
+                other_header_struct = _header_struct(
+                    ProtocolSettings(
+                        frame_header=self.settings.frame_header,
+                        frame_header_size=self.settings.frame_header_size,
+                        length_field_size=self.settings.length_field_size,
+                        length_field_units=self.settings.length_field_units,
+                        byte_order=_other_byte_order(self.settings.byte_order),
+                        channels=self.settings.channels,
+                        channel_layout=self.settings.channel_layout,
+                    )
+                )
+                swapped_frame_header = other_header_struct.unpack_from(self._buffer)[0]
+                if swapped_frame_header == self.settings.frame_header:
+                    message = (
+                        f"{message}; possible byte_order mismatch "
+                        f"(configured {self.settings.byte_order}, peer may be {_other_byte_order(self.settings.byte_order)})"
+                    )
+                raise ValueError(
+                    message
                 )
             payload_bytes = _payload_size_in_bytes(payload_length, self.settings)
             packet_size = header_struct.size + payload_bytes

@@ -10,7 +10,7 @@ class ProtocolSettings:
     frame_header_size: int = 2
     length_field_size: int = 8
     length_field_units: str = "bytes"
-    byte_order: str = "little"
+    byte_order: str = "big"
     channels: int = 8
     channel_layout: str = "interleaved"
 

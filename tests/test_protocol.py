@@ -58,6 +58,53 @@ class ProtocolTests(unittest.TestCase):
         frame = packet_to_frame(packets[0], settings)
         self.assertTrue(np.array_equal(channels, frame.channels))
 
+    def test_round_trip_big_endian_labview_style_packet(self) -> None:
+        settings = ProtocolSettings(
+            frame_header=11,
+            frame_header_size=2,
+            length_field_size=8,
+            length_field_units="bytes",
+            byte_order="big",
+            channels=8,
+            channel_layout="interleaved",
+        )
+        channels = np.arange(80, dtype=np.float64).reshape(8, 10)
+        payload = build_packet(10000.0, channels, settings)
+
+        decoder = PacketDecoder(settings)
+        packets = decoder.feed(payload)
+        self.assertEqual(1, len(packets))
+        self.assertEqual(channels.size * 8, packets[0].payload_bytes)
+
+        frame = packet_to_frame(packets[0], settings)
+        self.assertTrue(np.array_equal(channels, frame.channels))
+
+    def test_decoder_reports_possible_byte_order_mismatch(self) -> None:
+        sender_settings = ProtocolSettings(
+            frame_header=11,
+            frame_header_size=2,
+            length_field_size=8,
+            length_field_units="bytes",
+            byte_order="big",
+            channels=8,
+            channel_layout="interleaved",
+        )
+        receiver_settings = ProtocolSettings(
+            frame_header=11,
+            frame_header_size=2,
+            length_field_size=8,
+            length_field_units="bytes",
+            byte_order="little",
+            channels=8,
+            channel_layout="interleaved",
+        )
+        channels = np.arange(80, dtype=np.float64).reshape(8, 10)
+        payload = build_packet(10000.0, channels, sender_settings)
+
+        decoder = PacketDecoder(receiver_settings)
+        with self.assertRaisesRegex(ValueError, "possible byte_order mismatch"):
+            decoder.feed(payload)
+
     def test_round_trip_value_count_length_field(self) -> None:
         settings = ProtocolSettings(
             frame_header=11,
