@@ -44,6 +44,16 @@ class PacketDecoder:
     def pending_bytes(self) -> int:
         return len(self._buffer)
 
+    def header_size(self) -> int:
+        return _header_struct(self.settings).size
+
+    def preview_header(self) -> tuple[int, float, int] | None:
+        header_struct = _header_struct(self.settings)
+        if len(self._buffer) < header_struct.size:
+            return None
+        frame_header, sample_rate, payload_length = header_struct.unpack_from(self._buffer)
+        return frame_header, sample_rate, payload_length
+
     def feed(self, chunk: bytes) -> list[TcpPacket]:
         self._buffer.extend(chunk)
         packets: list[TcpPacket] = []

@@ -150,10 +150,19 @@ class TcpDataServer:
                         )
                         next_no_payload_warning_at = now + NO_PAYLOAD_WARNING_INTERVAL_SECONDS
                     if bytes_received > 0 and packets_decoded == 0 and now >= next_no_packet_warning_at:
+                        preview = decoder.preview_header()
+                        preview_text = (
+                            "header_preview=<insufficient-bytes>"
+                            if preview is None
+                            else (
+                                f"header_preview=(frame_header={preview[0]:#x}, "
+                                f"sample_rate={preview[1]:.6g}, payload_length={preview[2]})"
+                            )
+                        )
                         LOGGER.warning(
                             "Received %s payload bytes from %s but decoded 0 packets after %.1fs; "
                             "pending_buffer_bytes=%s, protocol=(frame_header=%#x, frame_header_size=%s, "
-                            "length_field_size=%s, length_field_units=%s, byte_order=%s, channel_layout=%s)",
+                            "length_field_size=%s, length_field_units=%s, byte_order=%s, channel_layout=%s), %s",
                             bytes_received,
                             peer_label,
                             now - connected_at,
@@ -164,6 +173,7 @@ class TcpDataServer:
                             self._protocol_settings.length_field_units,
                             self._protocol_settings.byte_order,
                             self._protocol_settings.channel_layout,
+                            preview_text,
                         )
                         next_no_packet_warning_at = now + NO_PACKET_WARNING_INTERVAL_SECONDS
                     continue
