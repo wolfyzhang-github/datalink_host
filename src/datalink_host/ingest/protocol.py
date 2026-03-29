@@ -54,6 +54,9 @@ class PacketDecoder:
         frame_header, sample_rate, payload_length = header_struct.unpack_from(self._buffer)
         return frame_header, sample_rate, payload_length
 
+    def buffer_prefix_hex(self, limit: int = 16) -> str:
+        return bytes(self._buffer[:limit]).hex(" ")
+
     def feed(self, chunk: bytes) -> list[TcpPacket]:
         self._buffer.extend(chunk)
         packets: list[TcpPacket] = []

@@ -283,7 +283,7 @@ class ProtocolTests(unittest.TestCase):
         with (
             patch(
                 "datalink_host.ingest.data_server.time.monotonic",
-                side_effect=[0.0, 0.2, 1.0, 2.0, 3.0, 4.0, 5.1],
+                side_effect=[0.0, 0.2, 0.3, 1.0, 2.0, 3.0, 4.0, 5.1, 5.2, 5.3],
             ),
             patch("datalink_host.ingest.data_server.LOGGER.warning") as warning_mock,
         ):

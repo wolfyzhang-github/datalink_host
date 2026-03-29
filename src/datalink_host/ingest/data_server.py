@@ -14,6 +14,7 @@ from datalink_host.models.messages import ChannelFrame, TcpPacket
 LOGGER = logging.getLogger(__name__)
 NO_PAYLOAD_WARNING_INTERVAL_SECONDS = 5.0
 NO_PACKET_WARNING_INTERVAL_SECONDS = 5.0
+INITIAL_CHUNK_LOG_LIMIT = 5
 
 
 class TcpDataServer:
@@ -131,6 +132,7 @@ class TcpDataServer:
         connected_at = time.monotonic()
         bytes_received = 0
         packets_decoded = 0
+        chunks_received = 0
         next_no_payload_warning_at = connected_at + NO_PAYLOAD_WARNING_INTERVAL_SECONDS
         next_no_packet_warning_at = connected_at + NO_PACKET_WARNING_INTERVAL_SECONDS
         peer_label = self._peer_label(conn)
@@ -193,9 +195,27 @@ class TcpDataServer:
                         time.monotonic() - connected_at,
                     )
                 bytes_received += len(chunk)
+                chunks_received += 1
                 self._on_bytes_received(len(chunk))
                 try:
                     packets = decoder.feed(chunk)
+                    if chunks_received <= INITIAL_CHUNK_LOG_LIMIT:
+                        LOGGER.info(
+                            "Chunk #%s from %s: chunk_bytes=%s, total_bytes=%s, buffered_bytes=%s, first_bytes=%s",
+                            chunks_received,
+                            peer_label,
+                            len(chunk),
+                            bytes_received,
+                            decoder.pending_bytes(),
+                            decoder.buffer_prefix_hex(),
+                        )
+                        if packets_decoded == 0 and decoder.pending_bytes() < decoder.header_size():
+                            LOGGER.info(
+                                "Waiting for full header from %s: buffered_bytes=%s, required_header_bytes=%s",
+                                peer_label,
+                                decoder.pending_bytes(),
+                                decoder.header_size(),
+                            )
                     if packets and packets_decoded == 0:
                         LOGGER.info(
                             "Decoded first packet from %s: sample_rate=%.3f Hz, payload_bytes=%s",
@@ -204,6 +224,14 @@ class TcpDataServer:
                             packets[0].payload_bytes,
                         )
                     packets_decoded += len(packets)
+                    if packets_decoded == 0 and time.monotonic() >= next_no_packet_warning_at:
+                        self._log_decode_wait_state(
+                            decoder=decoder,
+                            bytes_received=bytes_received,
+                            connected_at=connected_at,
+                            peer_label=peer_label,
+                        )
+                        next_no_packet_warning_at = time.monotonic() + NO_PACKET_WARNING_INTERVAL_SECONDS
                     for packet in packets:
                         self._on_packet(packet)
                         self._on_frame(packet_to_frame(packet, self._protocol_settings))
@@ -232,6 +260,42 @@ class TcpDataServer:
         if isinstance(peer, tuple) and len(peer) >= 2:
             return f"{peer[0]}:{peer[1]}"
         return str(peer)
+
+    def _log_decode_wait_state(
+        self,
+        decoder: PacketDecoder,
+        bytes_received: int,
+        connected_at: float,
+        peer_label: str,
+    ) -> None:
+        preview = decoder.preview_header()
+        preview_text = (
+            "header_preview=<insufficient-bytes>"
+            if preview is None
+            else (
+                f"header_preview=(frame_header={preview[0]:#x}, "
+                f"sample_rate={preview[1]:.6g}, payload_length={preview[2]})"
+            )
+        )
+        LOGGER.warning(
+            "Received %s payload bytes from %s but decoded 0 packets after %.1fs; "
+            "pending_buffer_bytes=%s, required_header_bytes=%s, first_bytes=%s, "
+            "protocol=(frame_header=%#x, frame_header_size=%s, length_field_size=%s, "
+            "length_field_units=%s, byte_order=%s, channel_layout=%s), %s",
+            bytes_received,
+            peer_label,
+            time.monotonic() - connected_at,
+            decoder.pending_bytes(),
+            decoder.header_size(),
+            decoder.buffer_prefix_hex(),
+            self._protocol_settings.frame_header,
+            self._protocol_settings.frame_header_size,
+            self._protocol_settings.length_field_size,
+            self._protocol_settings.length_field_units,
+            self._protocol_settings.byte_order,
+            self._protocol_settings.channel_layout,
+            preview_text,
+        )
 
     def _set_server_socket(self, sock: socket.socket | None) -> None:
         with self._socket_lock:
