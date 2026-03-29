@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
+import socket
 from pathlib import Path
 
 import numpy as np
 
 from datalink_host.core.logging import configure_logging, get_recent_logs
 from datalink_host.debug.capture import PacketCaptureWriter, read_capture
-from datalink_host.core.config import DataLinkSettings, ProtocolSettings, StorageSettings
+from datalink_host.core.config import DataLinkSettings, DataServerSettings, ProtocolSettings, StorageSettings
+from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.ingest.protocol import PacketDecoder, build_packet, packet_to_frame
 from datalink_host.models.messages import ProcessedFrame
 from datalink_host.processing.pipeline import compute_psd
@@ -73,6 +76,57 @@ class ProtocolTests(unittest.TestCase):
 
         frame = packet_to_frame(packets[0], settings)
         self.assertTrue(np.array_equal(channels, frame.channels))
+
+    def test_data_server_client_mode_receives_packet(self) -> None:
+        protocol = ProtocolSettings(
+            frame_header=11,
+            frame_header_size=2,
+            length_field_size=8,
+            length_field_units="bytes",
+            channels=8,
+            channel_layout="interleaved",
+        )
+        channels = np.arange(80, dtype=np.float64).reshape(8, 10)
+        packet = build_packet(10000.0, channels, protocol)
+        frames: list[np.ndarray] = []
+        frame_event = threading.Event()
+        errors: list[str] = []
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as upstream:
+            try:
+                upstream.bind(("127.0.0.1", 0))
+            except PermissionError as exc:
+                self.skipTest(f"socket bind is not allowed in this environment: {exc}")
+            upstream.listen(1)
+            upstream.settimeout(2.0)
+            port = upstream.getsockname()[1]
+            server = TcpDataServer(
+                DataServerSettings(
+                    mode="client",
+                    remote_host="127.0.0.1",
+                    remote_port=port,
+                    connect_timeout_seconds=0.5,
+                    reconnect_interval_seconds=0.1,
+                ),
+                protocol,
+                on_packet=lambda packet: None,
+                on_frame=lambda frame: (frames.append(frame.channels.copy()), frame_event.set()),
+                on_connection_state=lambda connected: None,
+                on_bytes_received=lambda count: None,
+                on_error=errors.append,
+            )
+            server.start()
+            try:
+                conn, _ = upstream.accept()
+                with conn:
+                    conn.sendall(packet)
+                    self.assertTrue(frame_event.wait(2.0))
+            finally:
+                server.stop()
+
+        self.assertFalse(errors)
+        self.assertEqual(1, len(frames))
+        self.assertTrue(np.array_equal(channels, frames[0]))
 
     def test_miniseed_writer_rotates_output_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

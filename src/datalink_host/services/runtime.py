@@ -129,8 +129,11 @@ class RuntimeService:
                     "channels": self._settings.protocol.channels,
                 },
                 "data_server": {
+                    "mode": self._settings.data_server.mode,
                     "host": self._settings.data_server.host,
                     "port": self._settings.data_server.port,
+                    "remote_host": self._settings.data_server.remote_host,
+                    "remote_port": self._settings.data_server.remote_port,
                 },
                 "storage": {
                     "enabled": self._settings.storage.enabled,
@@ -236,10 +239,16 @@ class RuntimeService:
                 restart_data_server = True
 
             if data_server:
+                if "mode" in data_server:
+                    self._settings.data_server.mode = str(data_server["mode"])
                 if "host" in data_server:
                     self._settings.data_server.host = str(data_server["host"])
                 if "port" in data_server:
                     self._settings.data_server.port = int(data_server["port"])
+                if "remote_host" in data_server:
+                    self._settings.data_server.remote_host = str(data_server["remote_host"])
+                if "remote_port" in data_server:
+                    self._settings.data_server.remote_port = int(data_server["remote_port"])
                 restart_data_server = True
 
             if storage:

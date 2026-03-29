@@ -28,7 +28,10 @@ def main() -> int:
     configure_logging(Path("./var/logs/datalink-host.log"))
 
     settings = AppSettings()
+    settings.data_server.mode = "server"
     settings.data_server.host = "127.0.0.1"
+    settings.data_server.remote_host = "127.0.0.1"
+    settings.data_server.remote_port = settings.data_server.port
     settings.control_server.host = "127.0.0.1"
     settings.storage.enabled = True
     settings.storage.root = Path("./var/storage")

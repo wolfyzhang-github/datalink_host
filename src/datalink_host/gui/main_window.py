@@ -25,7 +25,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._plots: list[pg.PlotDataItem] = []
         self._data1_rate_spin: QtWidgets.QDoubleSpinBox | None = None
         self._data2_rate_spin: QtWidgets.QDoubleSpinBox | None = None
+        self._data_mode_combo: QtWidgets.QComboBox | None = None
+        self._data_host_edit: QtWidgets.QLineEdit | None = None
         self._data_port_spin: QtWidgets.QSpinBox | None = None
+        self._data_remote_host_edit: QtWidgets.QLineEdit | None = None
+        self._data_remote_port_spin: QtWidgets.QSpinBox | None = None
         self._frame_header_edit: QtWidgets.QLineEdit | None = None
         self._frame_header_size_combo: QtWidgets.QComboBox | None = None
         self._length_field_size_combo: QtWidgets.QComboBox | None = None
@@ -133,9 +137,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self._data2_rate_spin.setDecimals(2)
         self._data2_rate_spin.setValue(self._settings.processing.data2_rate)
 
+        self._data_mode_combo = QtWidgets.QComboBox(widget)
+        self._data_mode_combo.addItem("主动连接设备", "client")
+        self._data_mode_combo.addItem("监听设备连接", "server")
+        self._data_mode_combo.setCurrentIndex(0 if self._settings.data_server.mode == "client" else 1)
+
+        self._data_host_edit = QtWidgets.QLineEdit(self._settings.data_server.host, widget)
+
         self._data_port_spin = QtWidgets.QSpinBox(widget)
         self._data_port_spin.setRange(1, 65535)
         self._data_port_spin.setValue(self._settings.data_server.port)
+
+        self._data_remote_host_edit = QtWidgets.QLineEdit(self._settings.data_server.remote_host, widget)
+
+        self._data_remote_port_spin = QtWidgets.QSpinBox(widget)
+        self._data_remote_port_spin.setRange(1, 65535)
+        self._data_remote_port_spin.setValue(self._settings.data_server.remote_port)
 
         self._frame_header_edit = QtWidgets.QLineEdit(str(self._settings.protocol.frame_header), widget)
 
@@ -204,43 +221,51 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._data1_rate_spin, 0, 1)
         layout.addWidget(QtWidgets.QLabel("降采样2 采样率"), 0, 2)
         layout.addWidget(self._data2_rate_spin, 0, 3)
-        layout.addWidget(QtWidgets.QLabel("数据端口"), 1, 0)
-        layout.addWidget(self._data_port_spin, 1, 1)
-        layout.addWidget(QtWidgets.QLabel("帧头值"), 1, 2)
-        layout.addWidget(self._frame_header_edit, 1, 3)
-        layout.addWidget(QtWidgets.QLabel("帧头字节数"), 2, 0)
-        layout.addWidget(self._frame_header_size_combo, 2, 1)
-        layout.addWidget(QtWidgets.QLabel("长度字段字节数"), 2, 2)
-        layout.addWidget(self._length_field_size_combo, 2, 3)
-        layout.addWidget(QtWidgets.QLabel("长度单位"), 3, 0)
-        layout.addWidget(self._length_field_units_combo, 3, 1)
-        layout.addWidget(QtWidgets.QLabel("字节序"), 3, 2)
-        layout.addWidget(self._byte_order_combo, 3, 3)
-        layout.addWidget(QtWidgets.QLabel("通道排列"), 4, 0)
-        layout.addWidget(self._channel_layout_combo, 4, 1)
-        layout.addWidget(self._storage_enabled_checkbox, 4, 2)
-        layout.addWidget(self._datalink_enabled_checkbox, 4, 3)
-        layout.addWidget(QtWidgets.QLabel("存储目录"), 5, 0)
-        layout.addWidget(self._storage_root_edit, 5, 1, 1, 3)
-        layout.addWidget(browse_button, 5, 4)
-        layout.addWidget(QtWidgets.QLabel("单文件时长(秒)"), 6, 0)
-        layout.addWidget(self._storage_duration_spin, 6, 1)
-        layout.addWidget(QtWidgets.QLabel("网络码"), 6, 2)
-        layout.addWidget(self._storage_network_edit, 6, 3)
-        layout.addWidget(QtWidgets.QLabel("台站码"), 7, 0)
-        layout.addWidget(self._storage_station_edit, 7, 1)
-        layout.addWidget(QtWidgets.QLabel("位置码"), 7, 2)
-        layout.addWidget(self._storage_location_edit, 7, 3)
-        layout.addWidget(QtWidgets.QLabel("DataLink 主机"), 8, 0)
-        layout.addWidget(self._datalink_host_edit, 8, 1)
-        layout.addWidget(QtWidgets.QLabel("DataLink 端口"), 8, 2)
-        layout.addWidget(self._datalink_port_spin, 8, 3)
-        layout.addWidget(self._datalink_ack_checkbox, 9, 0)
-        layout.addWidget(self._datalink_send_data2_checkbox, 9, 1)
-        layout.addWidget(self._capture_enabled_checkbox, 9, 2)
-        layout.addWidget(self._capture_path_edit, 9, 3)
-        layout.addWidget(capture_browse_button, 9, 4)
-        layout.addWidget(apply_button, 10, 4)
+        layout.addWidget(QtWidgets.QLabel("数据接入模式"), 1, 0)
+        layout.addWidget(self._data_mode_combo, 1, 1)
+        layout.addWidget(QtWidgets.QLabel("本地监听地址"), 1, 2)
+        layout.addWidget(self._data_host_edit, 1, 3)
+        layout.addWidget(QtWidgets.QLabel("本地监听端口"), 2, 0)
+        layout.addWidget(self._data_port_spin, 2, 1)
+        layout.addWidget(QtWidgets.QLabel("设备 IP"), 2, 2)
+        layout.addWidget(self._data_remote_host_edit, 2, 3)
+        layout.addWidget(QtWidgets.QLabel("设备端口"), 3, 0)
+        layout.addWidget(self._data_remote_port_spin, 3, 1)
+        layout.addWidget(QtWidgets.QLabel("帧头值"), 3, 2)
+        layout.addWidget(self._frame_header_edit, 3, 3)
+        layout.addWidget(QtWidgets.QLabel("帧头字节数"), 4, 0)
+        layout.addWidget(self._frame_header_size_combo, 4, 1)
+        layout.addWidget(QtWidgets.QLabel("长度字段字节数"), 4, 2)
+        layout.addWidget(self._length_field_size_combo, 4, 3)
+        layout.addWidget(QtWidgets.QLabel("长度单位"), 5, 0)
+        layout.addWidget(self._length_field_units_combo, 5, 1)
+        layout.addWidget(QtWidgets.QLabel("字节序"), 5, 2)
+        layout.addWidget(self._byte_order_combo, 5, 3)
+        layout.addWidget(QtWidgets.QLabel("通道排列"), 6, 0)
+        layout.addWidget(self._channel_layout_combo, 6, 1)
+        layout.addWidget(self._storage_enabled_checkbox, 6, 2)
+        layout.addWidget(self._datalink_enabled_checkbox, 6, 3)
+        layout.addWidget(QtWidgets.QLabel("存储目录"), 7, 0)
+        layout.addWidget(self._storage_root_edit, 7, 1, 1, 3)
+        layout.addWidget(browse_button, 7, 4)
+        layout.addWidget(QtWidgets.QLabel("单文件时长(秒)"), 8, 0)
+        layout.addWidget(self._storage_duration_spin, 8, 1)
+        layout.addWidget(QtWidgets.QLabel("网络码"), 8, 2)
+        layout.addWidget(self._storage_network_edit, 8, 3)
+        layout.addWidget(QtWidgets.QLabel("台站码"), 9, 0)
+        layout.addWidget(self._storage_station_edit, 9, 1)
+        layout.addWidget(QtWidgets.QLabel("位置码"), 9, 2)
+        layout.addWidget(self._storage_location_edit, 9, 3)
+        layout.addWidget(QtWidgets.QLabel("DataLink 主机"), 10, 0)
+        layout.addWidget(self._datalink_host_edit, 10, 1)
+        layout.addWidget(QtWidgets.QLabel("DataLink 端口"), 10, 2)
+        layout.addWidget(self._datalink_port_spin, 10, 3)
+        layout.addWidget(self._datalink_ack_checkbox, 11, 0)
+        layout.addWidget(self._datalink_send_data2_checkbox, 11, 1)
+        layout.addWidget(self._capture_enabled_checkbox, 11, 2)
+        layout.addWidget(self._capture_path_edit, 11, 3)
+        layout.addWidget(capture_browse_button, 11, 4)
+        layout.addWidget(apply_button, 12, 4)
         return widget
 
     def _build_plot_grid(self) -> QtWidgets.QWidget:
@@ -337,7 +362,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_runtime_config(self) -> None:
         assert self._data1_rate_spin is not None
         assert self._data2_rate_spin is not None
+        assert self._data_mode_combo is not None
+        assert self._data_host_edit is not None
         assert self._data_port_spin is not None
+        assert self._data_remote_host_edit is not None
+        assert self._data_remote_port_spin is not None
         assert self._frame_header_edit is not None
         assert self._frame_header_size_combo is not None
         assert self._length_field_size_combo is not None
@@ -364,7 +393,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 "data2_rate": self._data2_rate_spin.value(),
             },
             "data_server": {
+                "mode": self._data_mode_combo.currentData(),
+                "host": self._data_host_edit.text().strip() or "0.0.0.0",
                 "port": self._data_port_spin.value(),
+                "remote_host": self._data_remote_host_edit.text().strip() or "127.0.0.1",
+                "remote_port": self._data_remote_port_spin.value(),
             },
             "protocol": {
                 "frame_header": self._frame_header_edit.text().strip() or "11",

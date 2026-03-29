@@ -16,6 +16,22 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+## Windows 10 一键配置环境
+
+PowerShell 下执行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows_env.ps1
+```
+
+如果还想顺手放行联调所需端口：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\setup_windows_env.ps1 -AddFirewallRules
+```
+
 ## 启动 GUI
 
 ```bash
@@ -45,9 +61,10 @@ datalink-host-runtime
 
 默认行为：
 
-- 数据接收服务监听 `0.0.0.0:3677`
+- 数据链路默认工作在“主动连接设备”模式
+- 默认尝试连接设备 `127.0.0.1:3677`
 - 控制服务监听 `0.0.0.0:19001`
-- 模拟发送端默认连接 `127.0.0.1:3677`
+- 本地一键调试入口会自动切回监听模式，供模拟发送端接入
 
 ## 启动模拟发送端
 
@@ -84,6 +101,9 @@ datalink-host-replay ./var/captures/session.dlhcap --host 127.0.0.1 --port 3677
 
 当前 GUI 已支持直接配置以下协议项，便于现场联调：
 
+- 数据接入模式（主动连接设备 / 监听设备连接）
+- 本地监听地址 / 监听端口
+- 设备 IP / 设备端口
 - 数据端口
 - 帧头值
 - 帧头字节数

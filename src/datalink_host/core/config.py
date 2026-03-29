@@ -17,9 +17,14 @@ class ProtocolSettings:
 
 @dataclass(slots=True)
 class DataServerSettings:
+    mode: str = "client"
     host: str = "0.0.0.0"
     port: int = 3677
+    remote_host: str = "127.0.0.1"
+    remote_port: int = 3677
     recv_size: int = 65536
+    reconnect_interval_seconds: float = 3.0
+    connect_timeout_seconds: float = 5.0
 
 
 @dataclass(slots=True)
