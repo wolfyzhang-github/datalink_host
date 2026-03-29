@@ -41,6 +41,9 @@ class PacketDecoder:
     settings: ProtocolSettings
     _buffer: bytearray = field(default_factory=bytearray)
 
+    def pending_bytes(self) -> int:
+        return len(self._buffer)
+
     def feed(self, chunk: bytes) -> list[TcpPacket]:
         self._buffer.extend(chunk)
         packets: list[TcpPacket] = []

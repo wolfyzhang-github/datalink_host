@@ -22,6 +22,7 @@ from datalink_host.transport.datalink import DataLinkPublisher, DataLinkStats
 
 
 LOGGER = logging.getLogger(__name__)
+QUEUE_BACKLOG_WARNING_DEPTH = 8
 
 
 class RuntimeService:
@@ -67,6 +68,8 @@ class RuntimeService:
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
         self._runtime_started = False
         self._data_server_active = False
+        self._frames_enqueued = 0
+        self._frames_processed = 0
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -361,11 +364,25 @@ class RuntimeService:
         except queue.Full:
             self._set_error("Processing queue is full")
             return
+        self._frames_enqueued += 1
+        if self._frames_enqueued == 1:
+            LOGGER.info(
+                "Enqueued first decoded frame: sample_rate=%.3f Hz, channels=%s, samples=%s",
+                frame.sample_rate,
+                frame.channels.shape[0],
+                frame.channels.shape[1],
+            )
         with self._lock:
             self._snapshot.packets_received += 1
             self._snapshot.source_sample_rate = frame.sample_rate
             self._snapshot.queue_depth = self._queue.qsize()
             self._snapshot.updated_at = time.time()
+            queue_depth = self._snapshot.queue_depth
+        if queue_depth >= QUEUE_BACKLOG_WARNING_DEPTH and queue_depth % QUEUE_BACKLOG_WARNING_DEPTH == 0:
+            LOGGER.warning(
+                "Frame queue backlog is %s; decoded frames are arriving faster than processing/display can consume",
+                queue_depth,
+            )
 
     def _run_processor(self) -> None:
         while not self._stop_event.is_set():
@@ -373,15 +390,28 @@ class RuntimeService:
                 frame = self._queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            processed = self._pipeline.process(frame)
-            self._fan_out(processed)
-            with self._lock:
-                self._snapshot.latest_raw = processed.raw
-                self._snapshot.latest_unwrapped = processed.unwrapped
-                self._snapshot.latest_data1 = processed.data1
-                self._snapshot.latest_data2 = processed.data2
-                self._snapshot.queue_depth = self._queue.qsize()
-                self._snapshot.updated_at = time.time()
+            try:
+                processed = self._pipeline.process(frame)
+                self._fan_out(processed)
+                self._frames_processed += 1
+                if self._frames_processed == 1:
+                    LOGGER.info(
+                        "Processed first frame: raw_shape=%s, unwrapped_shape=%s, data1_shape=%s, data2_shape=%s",
+                        processed.raw.shape,
+                        processed.unwrapped.shape,
+                        processed.data1.shape,
+                        processed.data2.shape,
+                    )
+                with self._lock:
+                    self._snapshot.latest_raw = processed.raw
+                    self._snapshot.latest_unwrapped = processed.unwrapped
+                    self._snapshot.latest_data1 = processed.data1
+                    self._snapshot.latest_data2 = processed.data2
+                    self._snapshot.queue_depth = self._queue.qsize()
+                    self._snapshot.updated_at = time.time()
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Processing pipeline failed")
+                self._set_error(f"Processing pipeline failed: {exc}")
 
     def _fan_out(self, frame: ProcessedFrame) -> None:
         if self._settings.storage.enabled:

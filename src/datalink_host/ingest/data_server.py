@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+import time
 from collections.abc import Callable
 
 from datalink_host.core.config import DataServerSettings, ProtocolSettings
@@ -11,6 +12,8 @@ from datalink_host.models.messages import ChannelFrame, TcpPacket
 
 
 LOGGER = logging.getLogger(__name__)
+NO_PAYLOAD_WARNING_INTERVAL_SECONDS = 5.0
+NO_PACKET_WARNING_INTERVAL_SECONDS = 5.0
 
 
 class TcpDataServer:
@@ -125,22 +128,73 @@ class TcpDataServer:
             self._set_connection_socket(conn)
         self._on_connection_state(True)
         decoder = PacketDecoder(self._protocol_settings)
+        connected_at = time.monotonic()
+        bytes_received = 0
+        packets_decoded = 0
+        next_no_payload_warning_at = connected_at + NO_PAYLOAD_WARNING_INTERVAL_SECONDS
+        next_no_packet_warning_at = connected_at + NO_PACKET_WARNING_INTERVAL_SECONDS
+        peer_label = self._peer_label(conn)
         try:
             conn.settimeout(1.0)
             while not self._stop_event.is_set():
                 try:
                     chunk = conn.recv(self._settings.recv_size)
                 except TimeoutError:
+                    now = time.monotonic()
+                    if bytes_received == 0 and now >= next_no_payload_warning_at:
+                        LOGGER.warning(
+                            "TCP connection to %s is established but no payload bytes have arrived after %.1fs; "
+                            "peer may be idle or waiting for a start command",
+                            peer_label,
+                            now - connected_at,
+                        )
+                        next_no_payload_warning_at = now + NO_PAYLOAD_WARNING_INTERVAL_SECONDS
+                    if bytes_received > 0 and packets_decoded == 0 and now >= next_no_packet_warning_at:
+                        LOGGER.warning(
+                            "Received %s payload bytes from %s but decoded 0 packets after %.1fs; "
+                            "pending_buffer_bytes=%s, protocol=(frame_header=%#x, frame_header_size=%s, "
+                            "length_field_size=%s, length_field_units=%s, byte_order=%s, channel_layout=%s)",
+                            bytes_received,
+                            peer_label,
+                            now - connected_at,
+                            decoder.pending_bytes(),
+                            self._protocol_settings.frame_header,
+                            self._protocol_settings.frame_header_size,
+                            self._protocol_settings.length_field_size,
+                            self._protocol_settings.length_field_units,
+                            self._protocol_settings.byte_order,
+                            self._protocol_settings.channel_layout,
+                        )
+                        next_no_packet_warning_at = now + NO_PACKET_WARNING_INTERVAL_SECONDS
                     continue
                 except OSError as exc:
                     if not self._stop_event.is_set():
                         self._on_error(str(exc))
                     break
                 if not chunk:
+                    if bytes_received == 0 and not self._stop_event.is_set():
+                        LOGGER.warning("TCP connection to %s closed before any payload bytes arrived", peer_label)
                     break
+                if bytes_received == 0:
+                    LOGGER.info(
+                        "Received first payload chunk from %s: %s bytes after %.3fs",
+                        peer_label,
+                        len(chunk),
+                        time.monotonic() - connected_at,
+                    )
+                bytes_received += len(chunk)
                 self._on_bytes_received(len(chunk))
                 try:
-                    for packet in decoder.feed(chunk):
+                    packets = decoder.feed(chunk)
+                    if packets and packets_decoded == 0:
+                        LOGGER.info(
+                            "Decoded first packet from %s: sample_rate=%.3f Hz, payload_bytes=%s",
+                            peer_label,
+                            packets[0].sample_rate,
+                            packets[0].payload_bytes,
+                        )
+                    packets_decoded += len(packets)
+                    for packet in packets:
                         self._on_packet(packet)
                         self._on_frame(packet_to_frame(packet, self._protocol_settings))
                 except Exception as exc:  # noqa: BLE001
@@ -148,10 +202,26 @@ class TcpDataServer:
                     self._on_error(str(exc))
                     break
         finally:
-            LOGGER.info("Data connection closed")
+            LOGGER.info(
+                "Data connection closed for %s (bytes_received=%s, packets_decoded=%s)",
+                peer_label,
+                bytes_received,
+                packets_decoded,
+            )
             self._on_connection_state(False)
             if manage_socket:
                 self._set_connection_socket(None)
+
+    def _peer_label(self, conn: socket.socket) -> str:
+        try:
+            peer = conn.getpeername()
+        except OSError:
+            if self._settings.mode == "client":
+                return f"{self._settings.remote_host}:{self._settings.remote_port}"
+            return "<unknown-peer>"
+        if isinstance(peer, tuple) and len(peer) >= 2:
+            return f"{peer[0]}:{peer[1]}"
+        return str(peer)
 
     def _set_server_socket(self, sock: socket.socket | None) -> None:
         with self._socket_lock:

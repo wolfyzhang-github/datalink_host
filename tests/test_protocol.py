@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 import unittest
 import socket
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -221,6 +222,90 @@ class ProtocolTests(unittest.TestCase):
         runtime._data_server.stop.assert_called_once()
         self.assertFalse(runtime.is_processing_active())
         self.assertEqual(0, runtime.snapshot().queue_depth)
+
+    def test_data_server_logs_when_connected_without_payload(self) -> None:
+        conn = Mock()
+        conn.getpeername.return_value = ("169.254.56.252", 3677)
+        conn.recv.side_effect = [
+            TimeoutError(),
+            TimeoutError(),
+            TimeoutError(),
+            TimeoutError(),
+            TimeoutError(),
+            b"",
+        ]
+        states: list[bool] = []
+        errors: list[str] = []
+        server = TcpDataServer(
+            DataServerSettings(mode="client", remote_host="169.254.56.252", remote_port=3677),
+            ProtocolSettings(),
+            on_packet=lambda packet: None,
+            on_frame=lambda frame: None,
+            on_connection_state=states.append,
+            on_bytes_received=lambda count: None,
+            on_error=errors.append,
+        )
+
+        with (
+            patch("datalink_host.ingest.data_server.time.monotonic", side_effect=[0.0, 1.0, 2.0, 3.0, 4.0, 5.1]),
+            patch("datalink_host.ingest.data_server.LOGGER.warning") as warning_mock,
+        ):
+            server._handle_connection(conn, manage_socket=False)
+
+        self.assertEqual([True, False], states)
+        self.assertFalse(errors)
+        self.assertTrue(
+            any("no payload bytes have arrived" in call.args[0] for call in warning_mock.call_args_list)
+        )
+
+    def test_data_server_logs_when_bytes_arrive_without_complete_packet(self) -> None:
+        conn = Mock()
+        conn.getpeername.return_value = ("169.254.56.252", 3677)
+        conn.recv.side_effect = [
+            b"\x00\x0b",
+            TimeoutError(),
+            TimeoutError(),
+            TimeoutError(),
+            TimeoutError(),
+            TimeoutError(),
+            b"",
+        ]
+        server = TcpDataServer(
+            DataServerSettings(mode="client", remote_host="169.254.56.252", remote_port=3677),
+            ProtocolSettings(),
+            on_packet=lambda packet: None,
+            on_frame=lambda frame: None,
+            on_connection_state=lambda connected: None,
+            on_bytes_received=lambda count: None,
+            on_error=lambda message: None,
+        )
+
+        with (
+            patch(
+                "datalink_host.ingest.data_server.time.monotonic",
+                side_effect=[0.0, 0.2, 1.0, 2.0, 3.0, 4.0, 5.1],
+            ),
+            patch("datalink_host.ingest.data_server.LOGGER.warning") as warning_mock,
+        ):
+            server._handle_connection(conn, manage_socket=False)
+
+        self.assertTrue(
+            any("decoded 0 packets" in call.args[0] for call in warning_mock.call_args_list)
+        )
+
+    def test_runtime_processor_exception_updates_last_error(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._pipeline = Mock()
+        runtime._pipeline.process.side_effect = ValueError("boom")
+        runtime._queue.put_nowait(ChannelFrame(sample_rate=10.0, channels=np.zeros((8, 1))))
+
+        worker = threading.Thread(target=runtime._run_processor, daemon=True)
+        worker.start()
+        time.sleep(0.05)
+        runtime._stop_event.set()
+        worker.join(timeout=1.0)
+
+        self.assertIn("Processing pipeline failed: boom", runtime.snapshot().last_error or "")
 
     def test_miniseed_writer_rotates_output_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
