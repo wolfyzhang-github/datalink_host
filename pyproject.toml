@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datalink-host"
+version = "0.1.0"
+description = "Desktop host application for optical strain sensing with TCP ingest and DataLink transport."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "obspy>=1.4",
+  "PySide6>=6.8",
+  "pyqtgraph>=0.13",
+]
+
+[project.scripts]
+datalink-host = "datalink_host.app:main"
+datalink-host-gui = "datalink_host.gui.app:main"
+datalink-host-runtime = "datalink_host.service_main:main"
+datalink-host-debug = "datalink_host.debug_launcher:main"
+datalink-host-sim-sender = "datalink_host.tools.sender_sim:main"
+datalink-host-sim-receiver = "datalink_host.tools.receiver_sim:main"
+datalink-host-replay = "datalink_host.tools.replay:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
