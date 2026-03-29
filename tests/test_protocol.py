@@ -5,16 +5,18 @@ import threading
 import unittest
 import socket
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 
 from datalink_host.core.logging import configure_logging, get_recent_logs
 from datalink_host.debug.capture import PacketCaptureWriter, read_capture
-from datalink_host.core.config import DataLinkSettings, DataServerSettings, ProtocolSettings, StorageSettings
+from datalink_host.core.config import AppSettings, DataLinkSettings, DataServerSettings, ProtocolSettings, StorageSettings
 from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.ingest.protocol import PacketDecoder, build_packet, packet_to_frame
-from datalink_host.models.messages import ProcessedFrame
+from datalink_host.models.messages import ChannelFrame, ProcessedFrame
 from datalink_host.processing.pipeline import compute_psd
+from datalink_host.services.runtime import RuntimeService
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher
 
@@ -174,6 +176,51 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(errors)
         self.assertEqual(1, len(frames))
         self.assertTrue(np.array_equal(channels, frames[0]))
+
+    def test_runtime_restart_data_server_respects_processing_state(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        running_server = Mock()
+        restarted_server = Mock()
+        runtime._data_server = running_server
+        runtime._build_data_server = Mock(return_value=restarted_server)  # type: ignore[method-assign]
+        runtime._data_server_active = True
+
+        runtime._restart_data_server()
+
+        running_server.stop.assert_called_once()
+        restarted_server.start.assert_called_once()
+        self.assertIs(runtime._data_server, restarted_server)
+        self.assertTrue(runtime.is_processing_active())
+
+        paused_server = Mock()
+        rebuilt_server = Mock()
+        runtime._data_server = paused_server
+        runtime._build_data_server = Mock(return_value=rebuilt_server)  # type: ignore[method-assign]
+        runtime._data_server_active = False
+
+        runtime._restart_data_server()
+
+        paused_server.stop.assert_called_once()
+        rebuilt_server.start.assert_not_called()
+        self.assertIs(runtime._data_server, rebuilt_server)
+        self.assertFalse(runtime.is_processing_active())
+
+    def test_runtime_pause_and_resume_processing_update_state(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._data_server = Mock()
+        runtime._data_server_active = False
+        runtime._queue.put_nowait(ChannelFrame(sample_rate=10.0, channels=np.zeros((8, 1))))
+
+        runtime.resume_processing()
+
+        runtime._data_server.start.assert_called_once()
+        self.assertTrue(runtime.is_processing_active())
+
+        runtime.pause_processing()
+
+        runtime._data_server.stop.assert_called_once()
+        self.assertFalse(runtime.is_processing_active())
+        self.assertEqual(0, runtime.snapshot().queue_depth)
 
     def test_miniseed_writer_rotates_output_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

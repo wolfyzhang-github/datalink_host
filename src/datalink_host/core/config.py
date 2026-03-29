@@ -20,7 +20,7 @@ class DataServerSettings:
     mode: str = "client"
     host: str = "0.0.0.0"
     port: int = 3677
-    remote_host: str = "127.0.0.1"
+    remote_host: str = "169.254.56.252"
     remote_port: int = 3677
     recv_size: int = 65536
     reconnect_interval_seconds: float = 3.0

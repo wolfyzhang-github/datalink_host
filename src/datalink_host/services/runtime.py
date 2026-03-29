@@ -65,6 +65,8 @@ class RuntimeService:
         )
         self._stop_event = threading.Event()
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
+        self._runtime_started = False
+        self._data_server_active = False
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -78,26 +80,59 @@ class RuntimeService:
         )
 
     def _restart_data_server(self) -> None:
+        was_active = self._data_server_active
         self._data_server.stop()
         self._data_server = self._build_data_server()
-        self._data_server.start()
+        if was_active:
+            self._data_server.start()
+            self._data_server_active = True
 
     def start(self) -> None:
+        if self._runtime_started:
+            return
+        self._runtime_started = True
         self._stop_event.clear()
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
         self._processor_thread.start()
-        self._data_server.start()
         self._control_server.start()
+        self.resume_processing()
 
     def stop(self) -> None:
+        if not self._runtime_started:
+            return
+        self._runtime_started = False
         self._stop_event.set()
-        self._data_server.stop()
+        self.pause_processing()
         self._control_server.stop()
         self._processor_thread.join(timeout=2.0)
         self._storage.close()
         self._datalink.close()
         if self._capture is not None:
             self._capture.close()
+
+    def is_processing_active(self) -> bool:
+        return self._data_server_active
+
+    def resume_processing(self) -> None:
+        if self._data_server_active:
+            return
+        self._data_server.start()
+        self._data_server_active = True
+
+    def pause_processing(self) -> None:
+        if not self._data_server_active:
+            return
+        self._data_server.stop()
+        self._data_server_active = False
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+        with self._lock:
+            self._snapshot.data_connected = False
+            self._snapshot.queue_depth = 0
+            self._snapshot.updated_at = time.time()
 
     def snapshot(self) -> RuntimeSnapshot:
         with self._lock:

@@ -23,6 +23,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1400, 900)
         self._status_labels: dict[str, QtWidgets.QLabel] = {}
         self._plots: list[pg.PlotDataItem] = []
+        self._processing_state_label: QtWidgets.QLabel | None = None
+        self._start_processing_button: QtWidgets.QPushButton | None = None
+        self._pause_processing_button: QtWidgets.QPushButton | None = None
         self._data1_rate_spin: QtWidgets.QDoubleSpinBox | None = None
         self._data2_rate_spin: QtWidgets.QDoubleSpinBox | None = None
         self._data_mode_combo: QtWidgets.QComboBox | None = None
@@ -120,7 +123,21 @@ class MainWindow(QtWidgets.QMainWindow):
             button.toggled.connect(partial(self._set_mode, name))
             button_group.addButton(button)
             layout.addWidget(button)
+        self._processing_state_label = QtWidgets.QLabel(self)
+        self._start_processing_button = QtWidgets.QPushButton("开始处理", self)
+        self._pause_processing_button = QtWidgets.QPushButton("暂停处理", self)
+        self._start_processing_button.clicked.connect(self._start_processing)
+        self._pause_processing_button.clicked.connect(self._pause_processing)
+        self._start_processing_button.setMinimumHeight(32)
+        self._pause_processing_button.setMinimumHeight(32)
+        self._start_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
+        self._pause_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
+        layout.addSpacing(24)
+        layout.addWidget(self._processing_state_label)
+        layout.addWidget(self._start_processing_button)
+        layout.addWidget(self._pause_processing_button)
         layout.addStretch(1)
+        self._update_processing_controls()
         return layout
 
     def _build_config_panel(self) -> QtWidgets.QWidget:
@@ -396,7 +413,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "mode": self._data_mode_combo.currentData(),
                 "host": self._data_host_edit.text().strip() or "0.0.0.0",
                 "port": self._data_port_spin.value(),
-                "remote_host": self._data_remote_host_edit.text().strip() or "127.0.0.1",
+                "remote_host": self._data_remote_host_edit.text().strip() or "169.254.56.252",
                 "remote_port": self._data_remote_port_spin.value(),
             },
             "protocol": {
@@ -429,11 +446,21 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         try:
             self._runtime.update_config(payload)
+            self._update_processing_controls()
         except Exception as exc:  # noqa: BLE001
             QtWidgets.QMessageBox.critical(self, "应用配置失败", str(exc))
 
+    def _start_processing(self) -> None:
+        self._runtime.resume_processing()
+        self._update_processing_controls()
+
+    def _pause_processing(self) -> None:
+        self._runtime.pause_processing()
+        self._update_processing_controls()
+
     def _refresh(self) -> None:
         snapshot = self._runtime.snapshot()
+        self._update_processing_controls()
         self._update_status(snapshot)
         data = self._snapshot_data(snapshot)
         for index, curve in enumerate(self._plots):
@@ -467,6 +494,18 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         for key, label in self._status_labels.items():
             label.setText(values[key])
+
+    def _update_processing_controls(self) -> None:
+        if (
+            self._processing_state_label is None
+            or self._start_processing_button is None
+            or self._pause_processing_button is None
+        ):
+            return
+        active = self._runtime.is_processing_active()
+        self._processing_state_label.setText("处理状态: 运行中" if active else "处理状态: 已暂停")
+        self._start_processing_button.setEnabled(not active)
+        self._pause_processing_button.setEnabled(active)
 
     def _snapshot_data(self, snapshot: RuntimeSnapshot) -> np.ndarray | None:
         if self._data_mode == "raw":
