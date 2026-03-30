@@ -164,7 +164,8 @@ class TcpDataServer:
                         LOGGER.warning(
                             "Received %s payload bytes from %s but decoded 0 packets after %.1fs; "
                             "pending_buffer_bytes=%s, protocol=(frame_header=%#x, frame_header_size=%s, "
-                            "length_field_size=%s, length_field_units=%s, byte_order=%s, channel_layout=%s), %s",
+                            "length_field_size=%s, length_field_format=%s, length_field_units=%s, "
+                            "byte_order=%s, channel_layout=%s), %s",
                             bytes_received,
                             peer_label,
                             now - connected_at,
@@ -172,6 +173,7 @@ class TcpDataServer:
                             self._protocol_settings.frame_header,
                             self._protocol_settings.frame_header_size,
                             self._protocol_settings.length_field_size,
+                            self._protocol_settings.length_field_format,
                             self._protocol_settings.length_field_units,
                             self._protocol_settings.byte_order,
                             self._protocol_settings.channel_layout,
@@ -281,7 +283,7 @@ class TcpDataServer:
             "Received %s payload bytes from %s but decoded 0 packets after %.1fs; "
             "pending_buffer_bytes=%s, required_header_bytes=%s, first_bytes=%s, "
             "protocol=(frame_header=%#x, frame_header_size=%s, length_field_size=%s, "
-            "length_field_units=%s, byte_order=%s, channel_layout=%s), %s",
+            "length_field_format=%s, length_field_units=%s, byte_order=%s, channel_layout=%s), %s",
             bytes_received,
             peer_label,
             time.monotonic() - connected_at,
@@ -291,6 +293,7 @@ class TcpDataServer:
             self._protocol_settings.frame_header,
             self._protocol_settings.frame_header_size,
             self._protocol_settings.length_field_size,
+            self._protocol_settings.length_field_format,
             self._protocol_settings.length_field_units,
             self._protocol_settings.byte_order,
             self._protocol_settings.channel_layout,

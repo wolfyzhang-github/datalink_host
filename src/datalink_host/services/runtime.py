@@ -161,6 +161,7 @@ class RuntimeService:
                     "frame_header": self._settings.protocol.frame_header,
                     "frame_header_size": self._settings.protocol.frame_header_size,
                     "length_field_size": self._settings.protocol.length_field_size,
+                    "length_field_format": self._settings.protocol.length_field_format,
                     "length_field_units": self._settings.protocol.length_field_units,
                     "byte_order": self._settings.protocol.byte_order,
                     "channel_layout": self._settings.protocol.channel_layout,
@@ -264,6 +265,8 @@ class RuntimeService:
                     self._settings.protocol.frame_header_size = int(protocol["frame_header_size"])
                 if "length_field_size" in protocol:
                     self._settings.protocol.length_field_size = int(protocol["length_field_size"])
+                if "length_field_format" in protocol:
+                    self._settings.protocol.length_field_format = str(protocol["length_field_format"])
                 if "length_field_units" in protocol:
                     self._settings.protocol.length_field_units = str(protocol["length_field_units"])
                 if "byte_order" in protocol:

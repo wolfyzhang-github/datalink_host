@@ -36,6 +36,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._frame_header_edit: QtWidgets.QLineEdit | None = None
         self._frame_header_size_combo: QtWidgets.QComboBox | None = None
         self._length_field_size_combo: QtWidgets.QComboBox | None = None
+        self._length_field_format_combo: QtWidgets.QComboBox | None = None
         self._length_field_units_combo: QtWidgets.QComboBox | None = None
         self._byte_order_combo: QtWidgets.QComboBox | None = None
         self._channel_layout_combo: QtWidgets.QComboBox | None = None
@@ -181,6 +182,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._length_field_size_combo.addItems(["4", "8"])
         self._length_field_size_combo.setCurrentText(str(self._settings.protocol.length_field_size))
 
+        self._length_field_format_combo = QtWidgets.QComboBox(widget)
+        self._length_field_format_combo.addItem("无符号整数", "uint")
+        self._length_field_format_combo.addItem("浮点 float64", "float64")
+        self._length_field_format_combo.setCurrentIndex(
+            0 if self._settings.protocol.length_field_format == "uint" else 1
+        )
+
         self._length_field_units_combo = QtWidgets.QComboBox(widget)
         self._length_field_units_combo.addItem("字节", "bytes")
         self._length_field_units_combo.addItem("数值个数", "values")
@@ -254,35 +262,37 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._frame_header_size_combo, 4, 1)
         layout.addWidget(QtWidgets.QLabel("长度字段字节数"), 4, 2)
         layout.addWidget(self._length_field_size_combo, 4, 3)
-        layout.addWidget(QtWidgets.QLabel("长度单位"), 5, 0)
-        layout.addWidget(self._length_field_units_combo, 5, 1)
-        layout.addWidget(QtWidgets.QLabel("字节序"), 5, 2)
-        layout.addWidget(self._byte_order_combo, 5, 3)
-        layout.addWidget(QtWidgets.QLabel("通道排列"), 6, 0)
-        layout.addWidget(self._channel_layout_combo, 6, 1)
-        layout.addWidget(self._storage_enabled_checkbox, 6, 2)
-        layout.addWidget(self._datalink_enabled_checkbox, 6, 3)
-        layout.addWidget(QtWidgets.QLabel("存储目录"), 7, 0)
-        layout.addWidget(self._storage_root_edit, 7, 1, 1, 3)
-        layout.addWidget(browse_button, 7, 4)
-        layout.addWidget(QtWidgets.QLabel("单文件时长(秒)"), 8, 0)
-        layout.addWidget(self._storage_duration_spin, 8, 1)
-        layout.addWidget(QtWidgets.QLabel("网络码"), 8, 2)
-        layout.addWidget(self._storage_network_edit, 8, 3)
-        layout.addWidget(QtWidgets.QLabel("台站码"), 9, 0)
-        layout.addWidget(self._storage_station_edit, 9, 1)
-        layout.addWidget(QtWidgets.QLabel("位置码"), 9, 2)
-        layout.addWidget(self._storage_location_edit, 9, 3)
-        layout.addWidget(QtWidgets.QLabel("DataLink 主机"), 10, 0)
-        layout.addWidget(self._datalink_host_edit, 10, 1)
-        layout.addWidget(QtWidgets.QLabel("DataLink 端口"), 10, 2)
-        layout.addWidget(self._datalink_port_spin, 10, 3)
-        layout.addWidget(self._datalink_ack_checkbox, 11, 0)
-        layout.addWidget(self._datalink_send_data2_checkbox, 11, 1)
-        layout.addWidget(self._capture_enabled_checkbox, 11, 2)
-        layout.addWidget(self._capture_path_edit, 11, 3)
-        layout.addWidget(capture_browse_button, 11, 4)
-        layout.addWidget(apply_button, 12, 4)
+        layout.addWidget(QtWidgets.QLabel("长度字段类型"), 5, 0)
+        layout.addWidget(self._length_field_format_combo, 5, 1)
+        layout.addWidget(QtWidgets.QLabel("长度单位"), 5, 2)
+        layout.addWidget(self._length_field_units_combo, 5, 3)
+        layout.addWidget(QtWidgets.QLabel("字节序"), 6, 0)
+        layout.addWidget(self._byte_order_combo, 6, 1)
+        layout.addWidget(QtWidgets.QLabel("通道排列"), 6, 2)
+        layout.addWidget(self._channel_layout_combo, 6, 3)
+        layout.addWidget(self._storage_enabled_checkbox, 7, 2)
+        layout.addWidget(self._datalink_enabled_checkbox, 7, 3)
+        layout.addWidget(QtWidgets.QLabel("存储目录"), 8, 0)
+        layout.addWidget(self._storage_root_edit, 8, 1, 1, 3)
+        layout.addWidget(browse_button, 8, 4)
+        layout.addWidget(QtWidgets.QLabel("单文件时长(秒)"), 9, 0)
+        layout.addWidget(self._storage_duration_spin, 9, 1)
+        layout.addWidget(QtWidgets.QLabel("网络码"), 9, 2)
+        layout.addWidget(self._storage_network_edit, 9, 3)
+        layout.addWidget(QtWidgets.QLabel("台站码"), 10, 0)
+        layout.addWidget(self._storage_station_edit, 10, 1)
+        layout.addWidget(QtWidgets.QLabel("位置码"), 10, 2)
+        layout.addWidget(self._storage_location_edit, 10, 3)
+        layout.addWidget(QtWidgets.QLabel("DataLink 主机"), 11, 0)
+        layout.addWidget(self._datalink_host_edit, 11, 1)
+        layout.addWidget(QtWidgets.QLabel("DataLink 端口"), 11, 2)
+        layout.addWidget(self._datalink_port_spin, 11, 3)
+        layout.addWidget(self._datalink_ack_checkbox, 12, 0)
+        layout.addWidget(self._datalink_send_data2_checkbox, 12, 1)
+        layout.addWidget(self._capture_enabled_checkbox, 12, 2)
+        layout.addWidget(self._capture_path_edit, 12, 3)
+        layout.addWidget(capture_browse_button, 12, 4)
+        layout.addWidget(apply_button, 13, 4)
         return widget
 
     def _build_plot_grid(self) -> QtWidgets.QWidget:
@@ -387,6 +397,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._frame_header_edit is not None
         assert self._frame_header_size_combo is not None
         assert self._length_field_size_combo is not None
+        assert self._length_field_format_combo is not None
         assert self._length_field_units_combo is not None
         assert self._byte_order_combo is not None
         assert self._channel_layout_combo is not None
@@ -420,6 +431,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "frame_header": self._frame_header_edit.text().strip() or "11",
                 "frame_header_size": int(self._frame_header_size_combo.currentText()),
                 "length_field_size": int(self._length_field_size_combo.currentText()),
+                "length_field_format": self._length_field_format_combo.currentData(),
                 "length_field_units": self._length_field_units_combo.currentData(),
                 "byte_order": self._byte_order_combo.currentData(),
                 "channel_layout": self._channel_layout_combo.currentData(),

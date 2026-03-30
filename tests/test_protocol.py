@@ -28,6 +28,7 @@ class ProtocolTests(unittest.TestCase):
             frame_header=0x12345678,
             frame_header_size=4,
             length_field_size=4,
+            length_field_format="uint",
             channels=8,
             channel_layout="interleaved",
         )
@@ -46,6 +47,7 @@ class ProtocolTests(unittest.TestCase):
             frame_header=11,
             frame_header_size=2,
             length_field_size=8,
+            length_field_format="float64",
             length_field_units="bytes",
             channels=8,
             channel_layout="interleaved",
@@ -66,6 +68,7 @@ class ProtocolTests(unittest.TestCase):
             frame_header=11,
             frame_header_size=2,
             length_field_size=8,
+            length_field_format="float64",
             length_field_units="bytes",
             byte_order="big",
             channels=8,
@@ -87,6 +90,7 @@ class ProtocolTests(unittest.TestCase):
             frame_header=11,
             frame_header_size=2,
             length_field_size=8,
+            length_field_format="float64",
             length_field_units="bytes",
             byte_order="big",
             channels=8,
@@ -96,6 +100,7 @@ class ProtocolTests(unittest.TestCase):
             frame_header=11,
             frame_header_size=2,
             length_field_size=8,
+            length_field_format="float64",
             length_field_units="bytes",
             byte_order="little",
             channels=8,
@@ -113,7 +118,8 @@ class ProtocolTests(unittest.TestCase):
             frame_header=11,
             frame_header_size=2,
             length_field_size=8,
-            length_field_units="values",
+            length_field_format="float64",
+            length_field_units="bytes",
             channels=8,
             channel_layout="channel-major",
         )
@@ -132,6 +138,7 @@ class ProtocolTests(unittest.TestCase):
             frame_header=11,
             frame_header_size=2,
             length_field_size=8,
+            length_field_format="float64",
             length_field_units="bytes",
             channels=8,
             channel_layout="interleaved",
@@ -292,6 +299,26 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(
             any("decoded 0 packets" in call.args[0] for call in warning_mock.call_args_list)
         )
+
+    def test_round_trip_unsigned_value_count_length_field(self) -> None:
+        settings = ProtocolSettings(
+            frame_header=11,
+            frame_header_size=2,
+            length_field_size=8,
+            length_field_format="uint",
+            length_field_units="values",
+            channels=8,
+            channel_layout="channel-major",
+        )
+        channels = np.arange(80, dtype=np.float64).reshape(8, 10)
+        payload = build_packet(10000.0, channels, settings)
+
+        decoder = PacketDecoder(settings)
+        packets = decoder.feed(payload)
+        self.assertEqual(1, len(packets))
+
+        frame = packet_to_frame(packets[0], settings)
+        self.assertTrue(np.array_equal(channels, frame.channels))
 
     def test_runtime_processor_exception_updates_last_error(self) -> None:
         runtime = RuntimeService(AppSettings())

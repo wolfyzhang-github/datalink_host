@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frame-header", default="11")
     parser.add_argument("--frame-header-size", type=int, choices=(2, 4, 8), default=2)
     parser.add_argument("--length-field-size", type=int, choices=(4, 8), default=8)
+    parser.add_argument("--length-field-format", choices=("uint", "float64"), default="float64")
     parser.add_argument("--length-field-units", choices=("bytes", "values"), default="bytes")
     parser.add_argument("--byte-order", choices=("little", "big"), default="big")
     parser.add_argument("--channel-layout", choices=("interleaved", "channel-major"), default="interleaved")
@@ -114,6 +115,7 @@ def main() -> int:
                 frame_header=int(str(args.frame_header), 0),
                 frame_header_size=args.frame_header_size,
                 length_field_size=args.length_field_size,
+                length_field_format=args.length_field_format,
                 length_field_units=args.length_field_units,
                 byte_order=args.byte_order,
                 channels=args.channels,

@@ -25,10 +25,20 @@ def _unsigned_format(size: int) -> str:
         raise ValueError(f"Unsupported integer field size: {size}") from exc
 
 
+def _length_field_format(settings: ProtocolSettings) -> str:
+    if settings.length_field_format == "uint":
+        return _unsigned_format(settings.length_field_size)
+    if settings.length_field_format == "float64":
+        if settings.length_field_size != 8:
+            raise ValueError("float64 length field requires length_field_size=8")
+        return "d"
+    raise ValueError(f"Unsupported length field format: {settings.length_field_format}")
+
+
 def _header_struct(settings: ProtocolSettings) -> struct.Struct:
     prefix = _byte_order_prefix(settings.byte_order)
     frame_fmt = _unsigned_format(settings.frame_header_size)
-    length_fmt = _unsigned_format(settings.length_field_size)
+    length_fmt = _length_field_format(settings)
     return struct.Struct(f"{prefix}{frame_fmt}d{length_fmt}")
 
 
@@ -52,7 +62,7 @@ class PacketDecoder:
         if len(self._buffer) < header_struct.size:
             return None
         frame_header, sample_rate, payload_length = header_struct.unpack_from(self._buffer)
-        return frame_header, sample_rate, payload_length
+        return frame_header, sample_rate, _normalize_length_value(payload_length, self.settings)
 
     def buffer_prefix_hex(self, limit: int = 16) -> str:
         return bytes(self._buffer[:limit]).hex(" ")
@@ -72,6 +82,7 @@ class PacketDecoder:
                         frame_header=self.settings.frame_header,
                         frame_header_size=self.settings.frame_header_size,
                         length_field_size=self.settings.length_field_size,
+                        length_field_format=self.settings.length_field_format,
                         length_field_units=self.settings.length_field_units,
                         byte_order=_other_byte_order(self.settings.byte_order),
                         channels=self.settings.channels,
@@ -87,7 +98,10 @@ class PacketDecoder:
                 raise ValueError(
                     message
                 )
-            payload_bytes = _payload_size_in_bytes(payload_length, self.settings)
+            payload_bytes = _payload_size_in_bytes(
+                _normalize_length_value(payload_length, self.settings),
+                self.settings,
+            )
             packet_size = header_struct.size + payload_bytes
             if len(self._buffer) < packet_size:
                 break
@@ -115,6 +129,17 @@ def _payload_size_in_bytes(length_value: int, settings: ProtocolSettings) -> int
     if payload_bytes < 0:
         raise ValueError(f"Negative payload size: {payload_bytes}")
     return payload_bytes
+
+
+def _normalize_length_value(length_value: int | float, settings: ProtocolSettings) -> int:
+    if settings.length_field_format == "uint":
+        return int(length_value)
+    if settings.length_field_format == "float64":
+        rounded = int(round(float(length_value)))
+        if abs(float(length_value) - rounded) > 1e-6:
+            raise ValueError(f"Non-integer float64 length field: {length_value}")
+        return rounded
+    raise ValueError(f"Unsupported length field format: {settings.length_field_format}")
 
 
 def packet_to_frame(packet: TcpPacket, settings: ProtocolSettings) -> ChannelFrame:
@@ -157,5 +182,7 @@ def build_packet(sample_rate: float, channels: np.ndarray, settings: ProtocolSet
         payload_length = payload_values.size
     else:
         raise ValueError(f"Unsupported length field units: {settings.length_field_units}")
+    if settings.length_field_format == "float64":
+        payload_length = float(payload_length)
     header = header_struct.pack(settings.frame_header, sample_rate, payload_length)
     return header + payload

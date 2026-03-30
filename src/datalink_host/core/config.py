@@ -9,6 +9,7 @@ class ProtocolSettings:
     frame_header: int = 11
     frame_header_size: int = 2
     length_field_size: int = 8
+    length_field_format: str = "float64"
     length_field_units: str = "bytes"
     byte_order: str = "big"
     channels: int = 8
