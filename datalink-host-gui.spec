@@ -5,7 +5,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path.cwd()
 
 datas = collect_data_files("obspy") + collect_data_files("pyqtgraph")
 hiddenimports = collect_submodules("obspy")

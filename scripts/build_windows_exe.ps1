@@ -83,6 +83,9 @@ if ($Clean) {
 
 Write-Step "Building Windows executable"
 & $PyInstallerInVenv --noconfirm --clean .\datalink-host-gui.spec
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller build failed with exit code $LASTEXITCODE."
+}
 
 Write-Step "Done"
 Write-Host "Executable created at:"
