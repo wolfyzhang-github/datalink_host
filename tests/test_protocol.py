@@ -19,7 +19,7 @@ from datalink_host.models.messages import ChannelFrame, ProcessedFrame
 from datalink_host.processing.pipeline import compute_psd
 from datalink_host.services.runtime import RuntimeService
 from datalink_host.storage.miniseed import MiniSeedWriter
-from datalink_host.transport.datalink import DataLinkPublisher
+from datalink_host.transport.datalink import DataLinkPublisher, PendingDataLinkPacket
 
 
 class ProtocolTests(unittest.TestCase):
@@ -405,17 +405,66 @@ class ProtocolTests(unittest.TestCase):
             DataLinkSettings(),
             StorageSettings(),
         )
-        payload, stream_id = publisher._serialize_channel_packet(  # type: ignore[attr-defined]
+        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
             channel_index=0,
             values=np.ones(100, dtype=np.float64),
             sample_rate=100.0,
             received_at=1_700_000_000.0,
         )
-        packet = publisher._encode_packet(f"WRITE {stream_id} 1 2 A {len(payload)}", payload)  # type: ignore[attr-defined]
-        self.assertTrue(packet.startswith(b"DL"))
-        self.assertEqual("SC_S0001_10_HSH/MSEED", stream_id)
-        self.assertGreater(len(payload), 0)
-        self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
+        self.assertGreater(len(packets), 0)
+        for payload, stream_id, start_time, end_time in packets:
+            packet = publisher._encode_packet(f"WRITE {stream_id} 1 2 A {len(payload)}", payload)  # type: ignore[attr-defined]
+            self.assertTrue(packet.startswith(b"DL"))
+            self.assertEqual("SC_S0001_10_HSH/MSEED", stream_id)
+            self.assertEqual(512, len(payload))
+            self.assertLess(start_time, end_time)
+            self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
+        publisher.close()
+
+    def test_datalink_send_data2_uses_distinct_stream_suffix_without_group_placeholder(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(send_data2=True),
+            StorageSettings(),
+        )
+        data1_packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(10, dtype=np.float64),
+            sample_rate=100.0,
+            received_at=1_700_000_000.0,
+        )
+        data2_packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data2",
+            channel_index=0,
+            values=np.ones(10, dtype=np.float64),
+            sample_rate=10.0,
+            received_at=1_700_000_000.0,
+        )
+        self.assertTrue(all(packet[1].endswith("_data1/MSEED") for packet in data1_packets))
+        self.assertTrue(all(packet[1].endswith("_data2/MSEED") for packet in data2_packets))
+        publisher.close()
+
+    def test_datalink_consecutive_packets_keep_contiguous_time_windows(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        first = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(100, dtype=np.float64),
+            sample_rate=100.0,
+            received_at=1_700_000_000.0,
+        )
+        second = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(100, dtype=np.float64),
+            sample_rate=100.0,
+            received_at=1_700_000_000.92,
+        )
+        self.assertAlmostEqual(first[-1][3], second[0][2], places=6)
         publisher.close()
 
     def test_datalink_publish_uses_background_sender(self) -> None:
@@ -466,6 +515,36 @@ class ProtocolTests(unittest.TestCase):
         time.sleep(0.05)
 
         self.assertIn("timed out", publisher.stats().last_error or "")
+        publisher.close()
+
+    def test_datalink_background_sender_retries_failed_packet_in_memory(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(enabled=True, reconnect_interval_seconds=0.01),
+            StorageSettings(),
+        )
+        sent = threading.Event()
+        calls = 0
+
+        def _flaky_write(item: object) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise TimeoutError("timed out")
+            sent.set()
+
+        publisher._write_packet_locked = _flaky_write  # type: ignore[method-assign]
+        publisher._enqueue_packet(
+            PendingDataLinkPacket(
+                stream_id="SC_S0001_10_HSH/MSEED",
+                payload=b"x" * 512,
+                start_time=1_700_000_000.0,
+                end_time=1_700_000_001.0,
+                ack_required=True,
+            )
+        )
+
+        self.assertTrue(sent.wait(1.0))
+        self.assertGreaterEqual(calls, 2)
         publisher.close()
 
     def test_capture_round_trip(self) -> None:

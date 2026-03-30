@@ -73,7 +73,7 @@ def main() -> int:
 
     app = QtWidgets.QApplication(sys.argv)
     window = MainWindow(runtime, settings)
-    window.setWindowTitle("DataLink Host Debug")
+    window.setWindowTitle("长基线光纤应变信号监控软件")
     window.show()
     exit_code = app.exec()
 

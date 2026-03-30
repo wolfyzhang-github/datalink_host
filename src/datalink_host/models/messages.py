@@ -25,11 +25,17 @@ class ChannelFrame:
 
 @dataclass(slots=True)
 class ProcessedFrame:
+    # Source sample rate before any downsampling, in Hz.
     sample_rate: float
+    # Raw input samples with shape (channels, samples).
     raw: np.ndarray
+    # Phase-unwrapped version of raw data; same shape as raw.
     unwrapped: np.ndarray
+    # First downsampled output group with shape (channels, samples).
     data1: np.ndarray
+    # Second downsampled output group with shape (channels, samples).
     data2: np.ndarray
+    # Time when this frame finished ingest on the host, as a Unix timestamp in seconds.
     received_at: float = field(default_factory=time)
 
 

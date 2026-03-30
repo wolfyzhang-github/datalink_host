@@ -19,7 +19,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._runtime = runtime
         self._settings = settings
         self._data_mode = "unwrapped"
-        self.setWindowTitle("DataLink 上位机")
+        self.setWindowTitle("长基线光纤应变信号监控软件")
         self.resize(1400, 900)
         self._status_labels: dict[str, QtWidgets.QLabel] = {}
         self._plots: list[pg.PlotDataItem] = []
