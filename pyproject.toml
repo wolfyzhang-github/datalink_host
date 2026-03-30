@@ -15,6 +15,11 @@ dependencies = [
   "pyqtgraph>=0.13",
 ]
 
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=6.0",
+]
+
 [project.scripts]
 datalink-host = "datalink_host.app:main"
 datalink-host-gui = "datalink_host.gui.app:main"
