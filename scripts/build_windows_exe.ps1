@@ -89,4 +89,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Step "Done"
 Write-Host "Executable created at:"
-Write-Host "  .\dist\datalink-host-gui.exe"
+Write-Host "  .\dist\datalink-host-gui\datalink-host-gui.exe"
