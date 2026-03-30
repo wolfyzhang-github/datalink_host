@@ -230,6 +230,51 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(runtime.is_processing_active())
         self.assertEqual(0, runtime.snapshot().queue_depth)
 
+    def test_runtime_update_config_does_not_restart_data_server_when_protocol_and_network_are_unchanged(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._restart_data_server = Mock()  # type: ignore[method-assign]
+
+        runtime.update_config(
+            {
+                "processing": {"data1_rate": runtime._settings.processing.data1_rate},
+                "data_server": {
+                    "mode": runtime._settings.data_server.mode,
+                    "host": runtime._settings.data_server.host,
+                    "port": runtime._settings.data_server.port,
+                    "remote_host": runtime._settings.data_server.remote_host,
+                    "remote_port": runtime._settings.data_server.remote_port,
+                },
+                "protocol": {
+                    "frame_header": runtime._settings.protocol.frame_header,
+                    "frame_header_size": runtime._settings.protocol.frame_header_size,
+                    "length_field_size": runtime._settings.protocol.length_field_size,
+                    "length_field_format": runtime._settings.protocol.length_field_format,
+                    "length_field_units": runtime._settings.protocol.length_field_units,
+                    "byte_order": runtime._settings.protocol.byte_order,
+                    "channel_layout": runtime._settings.protocol.channel_layout,
+                },
+                "storage": {"enabled": runtime._settings.storage.enabled},
+            }
+        )
+
+        runtime._restart_data_server.assert_not_called()
+
+    def test_runtime_update_config_restarts_data_server_when_protocol_changes(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._restart_data_server = Mock()  # type: ignore[method-assign]
+
+        runtime.update_config(
+            {
+                "protocol": {
+                    "length_field_units": "bytes"
+                    if runtime._settings.protocol.length_field_units == "values"
+                    else "values"
+                }
+            }
+        )
+
+        runtime._restart_data_server.assert_called_once()
+
     def test_data_server_logs_when_connected_without_payload(self) -> None:
         conn = Mock()
         conn.getpeername.return_value = ("169.254.56.252", 3677)

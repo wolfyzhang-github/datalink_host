@@ -259,38 +259,64 @@ class RuntimeService:
                 self._settings.processing.enable_phase_unwrap = bool(processing["enable_phase_unwrap"])
 
             if protocol:
+                protocol_changed = False
                 if "frame_header" in protocol:
-                    self._settings.protocol.frame_header = int(str(protocol["frame_header"]), 0)
+                    frame_header = int(str(protocol["frame_header"]), 0)
+                    protocol_changed = protocol_changed or frame_header != self._settings.protocol.frame_header
+                    self._settings.protocol.frame_header = frame_header
                 if "frame_header_size" in protocol:
-                    self._settings.protocol.frame_header_size = int(protocol["frame_header_size"])
+                    frame_header_size = int(protocol["frame_header_size"])
+                    protocol_changed = protocol_changed or frame_header_size != self._settings.protocol.frame_header_size
+                    self._settings.protocol.frame_header_size = frame_header_size
                 if "length_field_size" in protocol:
-                    self._settings.protocol.length_field_size = int(protocol["length_field_size"])
+                    length_field_size = int(protocol["length_field_size"])
+                    protocol_changed = protocol_changed or length_field_size != self._settings.protocol.length_field_size
+                    self._settings.protocol.length_field_size = length_field_size
                 if "length_field_format" in protocol:
-                    self._settings.protocol.length_field_format = str(protocol["length_field_format"])
+                    length_field_format = str(protocol["length_field_format"])
+                    protocol_changed = protocol_changed or length_field_format != self._settings.protocol.length_field_format
+                    self._settings.protocol.length_field_format = length_field_format
                 if "length_field_units" in protocol:
-                    self._settings.protocol.length_field_units = str(protocol["length_field_units"])
+                    length_field_units = str(protocol["length_field_units"])
+                    protocol_changed = protocol_changed or length_field_units != self._settings.protocol.length_field_units
+                    self._settings.protocol.length_field_units = length_field_units
                 if "byte_order" in protocol:
-                    self._settings.protocol.byte_order = str(protocol["byte_order"])
+                    byte_order = str(protocol["byte_order"])
+                    protocol_changed = protocol_changed or byte_order != self._settings.protocol.byte_order
+                    self._settings.protocol.byte_order = byte_order
                 if "channel_layout" in protocol:
-                    self._settings.protocol.channel_layout = str(protocol["channel_layout"])
+                    channel_layout = str(protocol["channel_layout"])
+                    protocol_changed = protocol_changed or channel_layout != self._settings.protocol.channel_layout
+                    self._settings.protocol.channel_layout = channel_layout
                 if "channels" in protocol:
                     channels = int(protocol["channels"])
                     if channels != self._settings.protocol.channels:
                         raise ValueError("Changing channel count at runtime is not supported yet")
-                restart_data_server = True
+                restart_data_server = restart_data_server or protocol_changed
 
             if data_server:
+                data_server_changed = False
                 if "mode" in data_server:
-                    self._settings.data_server.mode = str(data_server["mode"])
+                    mode = str(data_server["mode"])
+                    data_server_changed = data_server_changed or mode != self._settings.data_server.mode
+                    self._settings.data_server.mode = mode
                 if "host" in data_server:
-                    self._settings.data_server.host = str(data_server["host"])
+                    host = str(data_server["host"])
+                    data_server_changed = data_server_changed or host != self._settings.data_server.host
+                    self._settings.data_server.host = host
                 if "port" in data_server:
-                    self._settings.data_server.port = int(data_server["port"])
+                    port = int(data_server["port"])
+                    data_server_changed = data_server_changed or port != self._settings.data_server.port
+                    self._settings.data_server.port = port
                 if "remote_host" in data_server:
-                    self._settings.data_server.remote_host = str(data_server["remote_host"])
+                    remote_host = str(data_server["remote_host"])
+                    data_server_changed = data_server_changed or remote_host != self._settings.data_server.remote_host
+                    self._settings.data_server.remote_host = remote_host
                 if "remote_port" in data_server:
-                    self._settings.data_server.remote_port = int(data_server["remote_port"])
-                restart_data_server = True
+                    remote_port = int(data_server["remote_port"])
+                    data_server_changed = data_server_changed or remote_port != self._settings.data_server.remote_port
+                    self._settings.data_server.remote_port = remote_port
+                restart_data_server = restart_data_server or data_server_changed
 
             if storage:
                 new_storage = deepcopy(self._settings.storage)
