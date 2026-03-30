@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--frame-header-size", type=int, choices=(2, 4, 8), default=2)
     parser.add_argument("--length-field-size", type=int, choices=(4, 8), default=8)
     parser.add_argument("--length-field-format", choices=("uint", "float64"), default="float64")
-    parser.add_argument("--length-field-units", choices=("bytes", "values"), default="bytes")
+    parser.add_argument("--length-field-units", choices=("bytes", "values"), default="values")
     parser.add_argument("--byte-order", choices=("little", "big"), default="big")
     parser.add_argument("--channel-layout", choices=("interleaved", "channel-major"), default="interleaved")
     return parser

@@ -26,6 +26,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._processing_state_label: QtWidgets.QLabel | None = None
         self._start_processing_button: QtWidgets.QPushButton | None = None
         self._pause_processing_button: QtWidgets.QPushButton | None = None
+        self._ingest_help_label: QtWidgets.QLabel | None = None
         self._data1_rate_spin: QtWidgets.QDoubleSpinBox | None = None
         self._data2_rate_spin: QtWidgets.QDoubleSpinBox | None = None
         self._data_mode_combo: QtWidgets.QComboBox | None = None
@@ -110,7 +111,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return layout
 
     def _build_controls(self) -> QtWidgets.QLayout:
-        layout = QtWidgets.QHBoxLayout()
+        layout = QtWidgets.QVBoxLayout()
+        top_row = QtWidgets.QHBoxLayout()
         button_group = QtWidgets.QButtonGroup(self)
         for name, text in (
             ("raw", "原始"),
@@ -123,26 +125,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 button.setChecked(True)
             button.toggled.connect(partial(self._set_mode, name))
             button_group.addButton(button)
-            layout.addWidget(button)
+            top_row.addWidget(button)
         self._processing_state_label = QtWidgets.QLabel(self)
-        self._start_processing_button = QtWidgets.QPushButton("开始处理", self)
-        self._pause_processing_button = QtWidgets.QPushButton("暂停处理", self)
+        self._start_processing_button = QtWidgets.QPushButton("启动数据接收", self)
+        self._pause_processing_button = QtWidgets.QPushButton("停止数据接收", self)
         self._start_processing_button.clicked.connect(self._start_processing)
         self._pause_processing_button.clicked.connect(self._pause_processing)
         self._start_processing_button.setMinimumHeight(32)
         self._pause_processing_button.setMinimumHeight(32)
         self._start_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
         self._pause_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
-        layout.addSpacing(24)
-        layout.addWidget(self._processing_state_label)
-        layout.addWidget(self._start_processing_button)
-        layout.addWidget(self._pause_processing_button)
-        layout.addStretch(1)
+        self._start_processing_button.setToolTip("启动 TCP 数据接收；若配置已修改，将按当前配置重新开始接收。")
+        self._pause_processing_button.setToolTip("停止 TCP 数据接收，但不会关闭界面，也不会清空已显示的数据。")
+        top_row.addSpacing(24)
+        top_row.addWidget(self._processing_state_label)
+        top_row.addWidget(self._start_processing_button)
+        top_row.addWidget(self._pause_processing_button)
+        top_row.addStretch(1)
+        self._ingest_help_label = QtWidgets.QLabel(
+            "上方按钮只控制数据接收是否运行。下方“保存配置”只修改配置：运行中保存会自动重连，停止时保存不会自动启动。",
+            self,
+        )
+        self._ingest_help_label.setWordWrap(True)
+        self._ingest_help_label.setStyleSheet("color: #555;")
+        layout.addLayout(top_row)
+        layout.addWidget(self._ingest_help_label)
         self._update_processing_controls()
         return layout
 
     def _build_config_panel(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QGroupBox("运行配置", self)
+        widget = QtWidgets.QGroupBox("采集与协议配置", self)
         layout = QtWidgets.QGridLayout(widget)
 
         self._data1_rate_spin = QtWidgets.QDoubleSpinBox(widget)
@@ -234,8 +246,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._capture_enabled_checkbox.setChecked(self._settings.capture.enabled)
         self._capture_path_edit = QtWidgets.QLineEdit(str(self._settings.capture.path), widget)
 
-        apply_button = QtWidgets.QPushButton("应用配置", widget)
+        apply_button = QtWidgets.QPushButton("保存配置", widget)
         apply_button.clicked.connect(self._apply_runtime_config)
+        apply_button.setToolTip("保存当前配置。若数据接收正在运行，会按新配置自动重连；若已停止，仅保存配置。")
+        apply_hint_label = QtWidgets.QLabel(
+            "保存规则：运行中保存会自动重建数据连接；已停止时仅保存参数，点击“启动数据接收”后才会生效。",
+            widget,
+        )
+        apply_hint_label.setWordWrap(True)
+        apply_hint_label.setStyleSheet("color: #555;")
 
         browse_button = QtWidgets.QPushButton("浏览...", widget)
         browse_button.clicked.connect(self._choose_storage_root)
@@ -292,6 +311,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._capture_enabled_checkbox, 12, 2)
         layout.addWidget(self._capture_path_edit, 12, 3)
         layout.addWidget(capture_browse_button, 12, 4)
+        layout.addWidget(apply_hint_label, 13, 0, 1, 4)
         layout.addWidget(apply_button, 13, 4)
         return widget
 
@@ -515,7 +535,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             return
         active = self._runtime.is_processing_active()
-        self._processing_state_label.setText("处理状态: 运行中" if active else "处理状态: 已暂停")
+        self._processing_state_label.setText("数据接收状态: 运行中" if active else "数据接收状态: 已停止")
         self._start_processing_button.setEnabled(not active)
         self._pause_processing_button.setEnabled(active)
 
