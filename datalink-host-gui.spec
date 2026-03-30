@@ -27,7 +27,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(PROJECT_ROOT / "scripts" / "pyi_rth_pyside6_dlls.py")],
     excludes=["PyQt5", "PyQt6", "PySide2"],
     noarchive=False,
 )
