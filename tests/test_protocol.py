@@ -416,6 +416,57 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual("SC_S0001_10_HSH/MSEED", stream_id)
         self.assertGreater(len(payload), 0)
         self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
+        publisher.close()
+
+    def test_datalink_publish_uses_background_sender(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        sent = threading.Event()
+
+        def _fake_write(item: object) -> None:
+            sent.set()
+
+        publisher._write_packet_locked = _fake_write  # type: ignore[method-assign]
+        frame = ProcessedFrame(
+            sample_rate=100.0,
+            raw=np.zeros((8, 100), dtype=np.float64),
+            unwrapped=np.zeros((8, 100), dtype=np.float64),
+            data1=np.ones((8, 100), dtype=np.float64),
+            data2=np.zeros((8, 0), dtype=np.float64),
+            received_at=1_700_000_000.0,
+        )
+
+        publisher.publish(frame)
+
+        self.assertTrue(sent.wait(1.0))
+        publisher.close()
+
+    def test_datalink_background_sender_records_error_without_blocking_publish(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+
+        def _failing_write(item: object) -> None:
+            raise TimeoutError("timed out")
+
+        publisher._write_packet_locked = _failing_write  # type: ignore[method-assign]
+        frame = ProcessedFrame(
+            sample_rate=100.0,
+            raw=np.zeros((8, 100), dtype=np.float64),
+            unwrapped=np.zeros((8, 100), dtype=np.float64),
+            data1=np.ones((8, 100), dtype=np.float64),
+            data2=np.zeros((8, 0), dtype=np.float64),
+            received_at=1_700_000_000.0,
+        )
+
+        publisher.publish(frame)
+        time.sleep(0.05)
+
+        self.assertIn("timed out", publisher.stats().last_error or "")
+        publisher.close()
 
     def test_capture_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
