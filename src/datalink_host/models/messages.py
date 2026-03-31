@@ -33,8 +33,12 @@ class ProcessedFrame:
     unwrapped: np.ndarray
     # First downsampled output group with shape (channels, samples).
     data1: np.ndarray
+    # Effective sample rate of data1 after downsampling, in Hz.
+    data1_sample_rate: float
     # Second downsampled output group with shape (channels, samples).
     data2: np.ndarray
+    # Effective sample rate of data2 after downsampling, in Hz.
+    data2_sample_rate: float
     # Time when this frame finished ingest on the host, as a Unix timestamp in seconds.
     received_at: float = field(default_factory=time)
 

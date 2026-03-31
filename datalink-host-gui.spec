@@ -3,7 +3,7 @@
 from pathlib import Path
 import importlib.util
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_delvewheel_libs_directory
 
 
 PROJECT_ROOT = Path.cwd()
@@ -50,6 +50,8 @@ binaries = _collect_root_binaries(
     ],
     "shiboken6",
 )
+datas, binaries = collect_delvewheel_libs_directory("PySide6", datas=datas, binaries=binaries)
+datas, binaries = collect_delvewheel_libs_directory("shiboken6", datas=datas, binaries=binaries)
 
 a = Analysis(
     [str(PROJECT_ROOT / "src" / "datalink_host" / "gui" / "app.py")],

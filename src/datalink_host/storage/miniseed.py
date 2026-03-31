@@ -41,13 +41,15 @@ class MiniSeedWriter:
             self._flush_buffer(key, state, settings, flush_all=True)
 
     def write(self, frame: ProcessedFrame) -> None:
-        outputs = (("data1", frame.data1), ("data2", frame.data2))
+        outputs = (
+            ("data1", frame.data1, frame.data1_sample_rate),
+            ("data2", frame.data2, frame.data2_sample_rate),
+        )
         with self._lock:
             settings = self._settings
-            for group_name, channels in outputs:
+            for group_name, channels, sample_rate in outputs:
                 if channels.size == 0:
                     continue
-                sample_rate = self._sample_rate_for_group(group_name, frame)
                 if sample_rate <= 0:
                     continue
                 for channel_index in range(channels.shape[0]):
@@ -62,11 +64,6 @@ class MiniSeedWriter:
                         received_at=frame.received_at,
                     )
                     self._flush_buffer(key, state, settings)
-
-    def _sample_rate_for_group(self, group_name: str, frame: ProcessedFrame) -> float:
-        if group_name == "data1":
-            return frame.data1.shape[1] and frame.data1.shape[1] / max(frame.raw.shape[1] / frame.sample_rate, 1e-9)
-        return frame.data2.shape[1] and frame.data2.shape[1] / max(frame.raw.shape[1] / frame.sample_rate, 1e-9)
 
     def _append_segment(self, state: _StreamBuffer, values: np.ndarray, received_at: float) -> None:
         if values.size == 0:

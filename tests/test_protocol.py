@@ -16,7 +16,7 @@ from datalink_host.core.config import AppSettings, DataLinkSettings, DataServerS
 from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.ingest.protocol import PacketDecoder, build_packet, packet_to_frame
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame
-from datalink_host.processing.pipeline import compute_psd
+from datalink_host.processing.pipeline import ProcessingPipeline, compute_psd
 from datalink_host.services.runtime import RuntimeService
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher, PendingDataLinkPacket
@@ -379,6 +379,22 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertIn("Processing pipeline failed: boom", runtime.snapshot().last_error or "")
 
+    def test_processing_pipeline_reports_stable_downsample_rates_with_carry(self) -> None:
+        pipeline = ProcessingPipeline(AppSettings().processing)
+        first = pipeline.process(
+            ChannelFrame(sample_rate=1000.0, channels=np.zeros((8, 15), dtype=np.float64), received_at=1.0)
+        )
+        second = pipeline.process(
+            ChannelFrame(sample_rate=1000.0, channels=np.zeros((8, 15), dtype=np.float64), received_at=2.0)
+        )
+
+        self.assertEqual((8, 1), first.data1.shape)
+        self.assertEqual((8, 2), second.data1.shape)
+        self.assertEqual(100.0, first.data1_sample_rate)
+        self.assertEqual(100.0, second.data1_sample_rate)
+        self.assertEqual(10.0, first.data2_sample_rate)
+        self.assertEqual(10.0, second.data2_sample_rate)
+
     def test_miniseed_writer_rotates_output_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             writer = MiniSeedWriter(
@@ -389,7 +405,9 @@ class ProtocolTests(unittest.TestCase):
                 raw=np.zeros((8, 100), dtype=np.float64),
                 unwrapped=np.zeros((8, 100), dtype=np.float64),
                 data1=np.ones((8, 100), dtype=np.float64),
+                data1_sample_rate=100.0,
                 data2=np.ones((8, 10), dtype=np.float64),
+                data2_sample_rate=10.0,
                 received_at=1_700_000_000.0,
             )
             writer.write(frame)
@@ -417,7 +435,7 @@ class ProtocolTests(unittest.TestCase):
             packet = publisher._encode_packet(f"WRITE {stream_id} 1 2 A {len(payload)}", payload)  # type: ignore[attr-defined]
             self.assertTrue(packet.startswith(b"DL"))
             self.assertEqual("SC_S0001_10_HSH/MSEED", stream_id)
-            self.assertEqual(512, len(payload))
+            self.assertGreater(len(payload), 0)
             self.assertLess(start_time, end_time)
             self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
         publisher.close()
@@ -445,26 +463,22 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(all(packet[1].endswith("_data2/MSEED") for packet in data2_packets))
         publisher.close()
 
-    def test_datalink_consecutive_packets_keep_contiguous_time_windows(self) -> None:
+    def test_datalink_packet_time_window_matches_frame_duration(self) -> None:
         publisher = DataLinkPublisher(
             DataLinkSettings(),
             StorageSettings(),
         )
-        first = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
             group_name="data1",
             channel_index=0,
             values=np.ones(100, dtype=np.float64),
             sample_rate=100.0,
             received_at=1_700_000_000.0,
         )
-        second = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
-            group_name="data1",
-            channel_index=0,
-            values=np.ones(100, dtype=np.float64),
-            sample_rate=100.0,
-            received_at=1_700_000_000.92,
-        )
-        self.assertAlmostEqual(first[-1][3], second[0][2], places=6)
+        self.assertEqual(1, len(packets))
+        _, _, start_time, end_time = packets[0]
+        self.assertAlmostEqual(1_699_999_999.0, start_time, places=6)
+        self.assertAlmostEqual(1_700_000_000.0, end_time, places=6)
         publisher.close()
 
     def test_datalink_publish_uses_background_sender(self) -> None:
@@ -483,7 +497,9 @@ class ProtocolTests(unittest.TestCase):
             raw=np.zeros((8, 100), dtype=np.float64),
             unwrapped=np.zeros((8, 100), dtype=np.float64),
             data1=np.ones((8, 100), dtype=np.float64),
+            data1_sample_rate=100.0,
             data2=np.zeros((8, 0), dtype=np.float64),
+            data2_sample_rate=10.0,
             received_at=1_700_000_000.0,
         )
 
@@ -507,7 +523,9 @@ class ProtocolTests(unittest.TestCase):
             raw=np.zeros((8, 100), dtype=np.float64),
             unwrapped=np.zeros((8, 100), dtype=np.float64),
             data1=np.ones((8, 100), dtype=np.float64),
+            data1_sample_rate=100.0,
             data2=np.zeros((8, 0), dtype=np.float64),
+            data2_sample_rate=10.0,
             received_at=1_700_000_000.0,
         )
 

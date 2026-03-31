@@ -19,7 +19,6 @@ from datalink_host.models.messages import ProcessedFrame
 
 LOGGER = logging.getLogger(__name__)
 PUBLISH_QUEUE_MAXSIZE = 512
-MINISEED_RECORD_LENGTH = 512
 
 
 @dataclass(slots=True)
@@ -48,7 +47,6 @@ class DataLinkPublisher:
         self._socket: socket.socket | None = None
         self._lock = threading.Lock()
         self._stats = DataLinkStats()
-        self._next_start_by_stream: dict[str, float] = {}
         self._warned_group_suffix = False
         self._send_queue: queue.Queue[PendingDataLinkPacket | None] = queue.Queue(maxsize=PUBLISH_QUEUE_MAXSIZE)
         self._stop_event = threading.Event()
@@ -90,9 +88,9 @@ class DataLinkPublisher:
             storage_settings = deepcopy(self._storage_settings)
         outputs: list[tuple[str, np.ndarray, float]] = []
         if frame.data1.size > 0:
-            outputs.append(("data1", frame.data1, self._group_sample_rate(frame.data1, frame)))
+            outputs.append(("data1", frame.data1, frame.data1_sample_rate))
         if settings.send_data2 and frame.data2.size > 0:
-            outputs.append(("data2", frame.data2, self._group_sample_rate(frame.data2, frame)))
+            outputs.append(("data2", frame.data2, frame.data2_sample_rate))
         if not outputs:
             return
 
@@ -120,12 +118,6 @@ class DataLinkPublisher:
                         )
                     )
 
-    def _group_sample_rate(self, data: np.ndarray, frame: ProcessedFrame) -> float:
-        if data.size == 0:
-            return 0.0
-        duration = frame.raw.shape[1] / max(frame.sample_rate, 1e-9)
-        return data.shape[1] / max(duration, 1e-9)
-
     def _serialize_channel_packets(
         self,
         *,
@@ -147,36 +139,10 @@ class DataLinkPublisher:
             settings=settings,
             storage_settings=storage_settings,
         )
-        start_time = self._assign_stream_time_window(
-            stream_id=stream_id,
-            sample_rate=sample_rate,
-            values_count=values.size,
-            received_at=received_at,
-        )
-        return self._serialize_channel_segment(
-            stream_id=stream_id,
-            channel_index=channel_index,
-            values=np.asarray(values, dtype=np.float64),
-            sample_rate=sample_rate,
-            start_time=start_time,
-            settings=settings,
-            storage_settings=storage_settings,
-        )
-
-    def _serialize_channel_segment(
-        self,
-        *,
-        stream_id: str,
-        channel_index: int,
-        values: np.ndarray,
-        sample_rate: float,
-        start_time: float,
-        settings: DataLinkSettings,
-        storage_settings: StorageSettings,
-    ) -> list[tuple[bytes, str, float, float]]:
+        values = np.asarray(values, dtype=np.float64)
         if values.size == 0:
             return []
-
+        start_time = received_at - (values.size / max(sample_rate, 1e-9))
         payload = self._encode_miniseed_record(
             channel_index=channel_index,
             values=values,
@@ -185,35 +151,7 @@ class DataLinkPublisher:
             storage_settings=storage_settings,
         )
         end_time = start_time + (values.size / max(sample_rate, 1e-9))
-
-        if len(payload) == MINISEED_RECORD_LENGTH:
-            return [(payload, stream_id, start_time, end_time)]
-        if len(payload) < MINISEED_RECORD_LENGTH:
-            raise ValueError(f"MiniSEED payload shorter than {MINISEED_RECORD_LENGTH} bytes: {len(payload)}")
-        if values.size <= 1:
-            raise ValueError(
-                f"Single-sample MiniSEED payload exceeds {MINISEED_RECORD_LENGTH} bytes: {len(payload)}"
-            )
-
-        midpoint = values.size // 2
-        split_time = start_time + (midpoint / max(sample_rate, 1e-9))
-        return self._serialize_channel_segment(
-            stream_id=stream_id,
-            channel_index=channel_index,
-            values=values[:midpoint],
-            sample_rate=sample_rate,
-            start_time=start_time,
-            settings=settings,
-            storage_settings=storage_settings,
-        ) + self._serialize_channel_segment(
-            stream_id=stream_id,
-            channel_index=channel_index,
-            values=values[midpoint:],
-            sample_rate=sample_rate,
-            start_time=split_time,
-            settings=settings,
-            storage_settings=storage_settings,
-        )
+        return [(payload, stream_id, start_time, end_time)]
 
     def _encode_miniseed_record(
         self,
@@ -236,9 +174,7 @@ class DataLinkPublisher:
         Stream([trace]).write(
             buffer,
             format="MSEED",
-            reclen=MINISEED_RECORD_LENGTH,
             encoding="FLOAT64",
-            flush=True,
         )
         return buffer.getvalue()
 
@@ -268,26 +204,6 @@ class DataLinkPublisher:
                 )
                 self._warned_group_suffix = True
         return stream_id
-
-    def _assign_stream_time_window(
-        self,
-        *,
-        stream_id: str,
-        sample_rate: float,
-        values_count: int,
-        received_at: float,
-    ) -> float:
-        duration = values_count / max(sample_rate, 1e-9)
-        fallback_start = received_at - duration
-        # Received-at timestamps jitter with network delivery; keep per-stream continuity when possible.
-        with self._lock:
-            next_start = self._next_start_by_stream.get(stream_id)
-            if next_start is None or abs(fallback_start - next_start) > max(duration * 2, 1.0):
-                start_time = fallback_start
-            else:
-                start_time = next_start
-            self._next_start_by_stream[stream_id] = start_time + duration
-        return start_time
 
     def _write_packet_locked(self, item: PendingDataLinkPacket) -> None:
         sock = self._ensure_connected_locked()

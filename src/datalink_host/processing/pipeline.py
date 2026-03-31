@@ -13,6 +13,14 @@ class AverageDownsampler:
     target_rate: float
     _carry: np.ndarray | None = field(default=None, init=False)
 
+    def output_rate(self, source_rate: float) -> float:
+        if source_rate <= 0:
+            return 0.0
+        if self.target_rate <= 0 or self.target_rate >= source_rate:
+            return source_rate
+        factor = max(int(round(source_rate / self.target_rate)), 1)
+        return source_rate / factor
+
     def process(self, channels: np.ndarray, source_rate: float) -> np.ndarray:
         if self.target_rate <= 0 or self.target_rate >= source_rate:
             return channels.copy()
@@ -51,7 +59,9 @@ class ProcessingPipeline:
             raw=raw,
             unwrapped=unwrapped,
             data1=data1,
+            data1_sample_rate=self._data1.output_rate(frame.sample_rate),
             data2=data2,
+            data2_sample_rate=self._data2.output_rate(frame.sample_rate),
             received_at=frame.received_at,
         )
 
