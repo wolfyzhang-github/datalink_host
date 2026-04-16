@@ -63,6 +63,7 @@ class ProcessingPipeline:
             data2=data2,
             data2_sample_rate=self._data2.output_rate(frame.sample_rate),
             received_at=frame.received_at,
+            timestamp_us=frame.timestamp_us,
         )
 
 

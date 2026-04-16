@@ -17,8 +17,9 @@ from datalink_host.ingest.control_server import TcpControlServer
 from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame, RuntimeSnapshot, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline
+from datalink_host.services.gps_time import GpsTimeService, format_timestamp_us
 from datalink_host.storage.miniseed import MiniSeedWriter
-from datalink_host.transport.datalink import DataLinkPublisher, DataLinkStats
+from datalink_host.transport.datalink import DataLinkPublisher
 
 
 LOGGER = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class RuntimeService:
         self._pipeline = ProcessingPipeline(settings.processing)
         self._storage = MiniSeedWriter(settings.storage)
         self._datalink = DataLinkPublisher(settings.datalink, settings.storage)
+        self._gps_time = GpsTimeService(settings.gps)
         self._capture = PacketCaptureWriter(settings.capture.path) if settings.capture.enabled else None
         self._queue: queue.Queue[ChannelFrame] = queue.Queue(maxsize=32)
         self._lock = threading.Lock()
@@ -52,6 +54,14 @@ class RuntimeService:
             datalink_last_error=None,
             storage_enabled=settings.storage.enabled,
             capture_enabled=settings.capture.enabled,
+            gps_enabled=settings.gps.enabled,
+            gps_connected=False,
+            gps_mode=settings.gps.mode,
+            gps_port=settings.gps.port,
+            gps_baudrate=settings.gps.baudrate,
+            gps_last_timestamp=None,
+            gps_last_error=None,
+            gps_fallback_active=False,
             latest_raw=None,
             latest_unwrapped=None,
             latest_data1=None,
@@ -70,6 +80,7 @@ class RuntimeService:
         self._data_server_active = False
         self._frames_enqueued = 0
         self._frames_processed = 0
+        self._last_frame_end_us: int | None = None
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -95,6 +106,7 @@ class RuntimeService:
             return
         self._runtime_started = True
         self._stop_event.clear()
+        self._gps_time.start()
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
         self._processor_thread.start()
         self._control_server.start()
@@ -108,6 +120,7 @@ class RuntimeService:
         self.pause_processing()
         self._control_server.stop()
         self._processor_thread.join(timeout=2.0)
+        self._gps_time.stop()
         self._storage.close()
         self._datalink.close()
         if self._capture is not None:
@@ -115,6 +128,9 @@ class RuntimeService:
 
     def is_processing_active(self) -> bool:
         return self._data_server_active
+
+    def gps_ports(self) -> list[str]:
+        return self._gps_time.available_ports()
 
     def resume_processing(self) -> None:
         if self._data_server_active:
@@ -139,14 +155,26 @@ class RuntimeService:
 
     def snapshot(self) -> RuntimeSnapshot:
         with self._lock:
-            stats = self._datalink.stats()
+            datalink_stats = self._datalink.stats()
+            gps_status = self._gps_time.status()
+            gps_last_timestamp = self._snapshot.gps_last_timestamp
+            if gps_last_timestamp is None and gps_status.last_timestamp_us is not None:
+                gps_last_timestamp = format_timestamp_us(gps_status.last_timestamp_us)
+            gps_last_error = self._snapshot.gps_last_error or gps_status.last_error
             return replace(
                 self._snapshot,
-                datalink_connected=stats.connected,
-                datalink_packets_sent=stats.packets_sent,
-                datalink_bytes_sent=stats.bytes_sent,
-                datalink_reconnects=stats.reconnects,
-                datalink_last_error=stats.last_error,
+                datalink_connected=datalink_stats.connected,
+                datalink_packets_sent=datalink_stats.packets_sent,
+                datalink_bytes_sent=datalink_stats.bytes_sent,
+                datalink_reconnects=datalink_stats.reconnects,
+                datalink_last_error=datalink_stats.last_error,
+                gps_enabled=self._settings.gps.enabled,
+                gps_connected=gps_status.connected,
+                gps_mode=self._settings.gps.mode,
+                gps_port=self._settings.gps.port,
+                gps_baudrate=self._settings.gps.baudrate,
+                gps_last_timestamp=gps_last_timestamp,
+                gps_last_error=gps_last_error,
             )
 
     def current_config(self) -> dict[str, Any]:
@@ -190,6 +218,13 @@ class RuntimeService:
                     "stream_id_template": self._settings.datalink.stream_id_template,
                     "ack_required": self._settings.datalink.ack_required,
                     "send_data2": self._settings.datalink.send_data2,
+                },
+                "gps": {
+                    "enabled": self._settings.gps.enabled,
+                    "port": self._settings.gps.port,
+                    "baudrate": self._settings.gps.baudrate,
+                    "mode": self._settings.gps.mode,
+                    "poll_interval_seconds": self._settings.gps.poll_interval_seconds,
                 },
                 "capture": {
                     "enabled": self._settings.capture.enabled,
@@ -243,6 +278,7 @@ class RuntimeService:
             data_server = payload.get("data_server", {})
             storage = payload.get("storage", {})
             datalink = payload.get("datalink", {})
+            gps = payload.get("gps", {})
             capture = payload.get("capture", {})
             restart_data_server = False
 
@@ -358,6 +394,26 @@ class RuntimeService:
                 self._snapshot.datalink_enabled = self._settings.datalink.enabled
                 self._datalink.update_settings(self._settings.datalink, self._settings.storage)
 
+            if gps:
+                if "enabled" in gps:
+                    self._settings.gps.enabled = bool(gps["enabled"])
+                if "port" in gps:
+                    self._settings.gps.port = str(gps["port"])
+                if "baudrate" in gps:
+                    self._settings.gps.baudrate = int(gps["baudrate"])
+                if "mode" in gps:
+                    mode = str(gps["mode"])
+                    if mode not in {"debug", "deploy"}:
+                        raise ValueError("GPS mode must be 'debug' or 'deploy'")
+                    self._settings.gps.mode = mode
+                if "poll_interval_seconds" in gps:
+                    self._settings.gps.poll_interval_seconds = float(gps["poll_interval_seconds"])
+                self._gps_time.update_settings(deepcopy(self._settings.gps))
+                self._snapshot.gps_enabled = self._settings.gps.enabled
+                self._snapshot.gps_mode = self._settings.gps.mode
+                self._snapshot.gps_port = self._settings.gps.port
+                self._snapshot.gps_baudrate = self._settings.gps.baudrate
+
             if capture:
                 if "enabled" in capture:
                     self._settings.capture.enabled = bool(capture["enabled"])
@@ -388,6 +444,8 @@ class RuntimeService:
             )
 
     def _on_frame(self, frame: ChannelFrame) -> None:
+        timestamp_us, used_fallback, gps_error = self._resolve_frame_timestamp(frame)
+        frame.timestamp_us = timestamp_us
         try:
             self._queue.put_nowait(frame)
         except queue.Full:
@@ -402,6 +460,12 @@ class RuntimeService:
                 frame.channels.shape[1],
             )
         with self._lock:
+            if timestamp_us is not None:
+                self._last_frame_end_us = timestamp_us
+                if self._settings.gps.enabled:
+                    self._snapshot.gps_last_timestamp = format_timestamp_us(timestamp_us)
+            self._snapshot.gps_fallback_active = used_fallback
+            self._snapshot.gps_last_error = gps_error
             self._snapshot.packets_received += 1
             self._snapshot.source_sample_rate = frame.sample_rate
             self._snapshot.queue_depth = self._queue.qsize()
@@ -412,6 +476,34 @@ class RuntimeService:
                 "Frame queue backlog is %s; decoded frames are arriving faster than processing/display can consume",
                 queue_depth,
             )
+
+    def _resolve_frame_timestamp(self, frame: ChannelFrame) -> tuple[int | None, bool, str | None]:
+        if not self._settings.gps.enabled:
+            return int(round(frame.received_at * 1_000_000)), False, None
+
+        gps_now_us = self._gps_time.current_time_us()
+        gps_status = self._gps_time.status()
+        if gps_now_us is not None:
+            return gps_now_us, False, None
+
+        duration_us = self._frame_duration_us(frame)
+        with self._lock:
+            last_frame_end_us = self._last_frame_end_us
+        if last_frame_end_us is not None and duration_us is not None:
+            return (
+                last_frame_end_us + duration_us,
+                True,
+                gps_status.last_error or "GPS unavailable; using previous frame timestamp fallback",
+            )
+
+        return None, False, gps_status.last_error or "GPS unavailable and no fallback timestamp is available"
+
+    @staticmethod
+    def _frame_duration_us(frame: ChannelFrame) -> int | None:
+        if frame.sample_rate <= 0:
+            return None
+        sample_count = frame.channels.shape[1]
+        return int(round((sample_count / frame.sample_rate) * 1_000_000))
 
     def _run_processor(self) -> None:
         while not self._stop_event.is_set():
@@ -495,6 +587,14 @@ class RuntimeService:
                     "datalink_reconnects": snapshot.datalink_reconnects,
                     "datalink_last_error": snapshot.datalink_last_error,
                     "capture_enabled": snapshot.capture_enabled,
+                    "gps_enabled": snapshot.gps_enabled,
+                    "gps_connected": snapshot.gps_connected,
+                    "gps_mode": snapshot.gps_mode,
+                    "gps_port": snapshot.gps_port,
+                    "gps_baudrate": snapshot.gps_baudrate,
+                    "gps_last_timestamp": snapshot.gps_last_timestamp,
+                    "gps_last_error": snapshot.gps_last_error,
+                    "gps_fallback_active": snapshot.gps_fallback_active,
                     "last_error": snapshot.last_error,
                 },
             }
@@ -512,6 +612,8 @@ class RuntimeService:
                 config_payload.setdefault("storage", {})["enabled"] = bool(payload["storage_enabled"])
             if "datalink_enabled" in payload:
                 config_payload.setdefault("datalink", {})["enabled"] = bool(payload["datalink_enabled"])
+            if "gps_enabled" in payload:
+                config_payload.setdefault("gps", {})["enabled"] = bool(payload["gps_enabled"])
             return {"status": "ok", "payload": self.update_config(config_payload)}
 
         raise ValueError(f"Unsupported control message type: {message_type}")

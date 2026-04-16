@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import threading
 import time
@@ -9,15 +10,26 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import numpy as np
+from fastapi.testclient import TestClient
+from obspy import read
 
+from datalink_host.core.config import (
+    AppSettings,
+    DataLinkSettings,
+    DataServerSettings,
+    GpsSettings,
+    ProtocolSettings,
+    StorageSettings,
+)
 from datalink_host.core.logging import configure_logging, get_recent_logs
 from datalink_host.debug.capture import PacketCaptureWriter, read_capture
-from datalink_host.core.config import AppSettings, DataLinkSettings, DataServerSettings, ProtocolSettings, StorageSettings
 from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.ingest.protocol import PacketDecoder, build_packet, packet_to_frame
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame
 from datalink_host.processing.pipeline import ProcessingPipeline, compute_psd
+from datalink_host.services.gps_time import GpsStatus, format_timestamp_us, gps_timestamp_to_us
 from datalink_host.services.runtime import RuntimeService
+from datalink_host.services.web_api import create_app
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher, PendingDataLinkPacket
 
@@ -409,12 +421,13 @@ class ProtocolTests(unittest.TestCase):
                 data2=np.ones((8, 10), dtype=np.float64),
                 data2_sample_rate=10.0,
                 received_at=1_700_000_000.0,
+                timestamp_us=1_700_000_000_000_000,
             )
             writer.write(frame)
             writer.close()
 
-            data1_files = sorted((Path(tmpdir) / "data1").glob("*.mseed"))
-            data2_files = sorted((Path(tmpdir) / "data2").glob("*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            data2_files = sorted(Path(tmpdir).glob("Data2-*/*.mseed"))
             self.assertEqual(8, len(data1_files))
             self.assertEqual(8, len(data2_files))
 
@@ -428,7 +441,7 @@ class ProtocolTests(unittest.TestCase):
             channel_index=0,
             values=np.ones(100, dtype=np.float64),
             sample_rate=100.0,
-            received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
         )
         self.assertGreater(len(packets), 0)
         for payload, stream_id, start_time, end_time in packets:
@@ -438,6 +451,26 @@ class ProtocolTests(unittest.TestCase):
             self.assertGreater(len(payload), 0)
             self.assertLess(start_time, end_time)
             self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
+        publisher.close()
+
+    def test_datalink_payload_uses_float32_miniseed_encoding(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.array([1.25, 2.5, 3.75], dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_000_000_000,
+        )
+
+        self.assertEqual(1, len(packets))
+        payload, _, _, _ = packets[0]
+        stream = read(io.BytesIO(payload), format="MSEED")
+        self.assertEqual(np.dtype("float32"), stream[0].data.dtype)
+        self.assertEqual("FLOAT32", stream[0].stats.mseed.encoding)
         publisher.close()
 
     def test_datalink_send_data2_uses_distinct_stream_suffix_without_group_placeholder(self) -> None:
@@ -450,14 +483,14 @@ class ProtocolTests(unittest.TestCase):
             channel_index=0,
             values=np.ones(10, dtype=np.float64),
             sample_rate=100.0,
-            received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
         )
         data2_packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
             group_name="data2",
             channel_index=0,
             values=np.ones(10, dtype=np.float64),
             sample_rate=10.0,
-            received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
         )
         self.assertTrue(all(packet[1].endswith("_data1/MSEED") for packet in data1_packets))
         self.assertTrue(all(packet[1].endswith("_data2/MSEED") for packet in data2_packets))
@@ -473,7 +506,7 @@ class ProtocolTests(unittest.TestCase):
             channel_index=0,
             values=np.ones(100, dtype=np.float64),
             sample_rate=100.0,
-            received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
         )
         self.assertEqual(1, len(packets))
         _, _, start_time, end_time = packets[0]
@@ -501,6 +534,7 @@ class ProtocolTests(unittest.TestCase):
             data2=np.zeros((8, 0), dtype=np.float64),
             data2_sample_rate=10.0,
             received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
         )
 
         publisher.publish(frame)
@@ -527,6 +561,7 @@ class ProtocolTests(unittest.TestCase):
             data2=np.zeros((8, 0), dtype=np.float64),
             data2_sample_rate=10.0,
             received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
         )
 
         publisher.publish(frame)
@@ -581,6 +616,59 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(1, len(records))
             self.assertEqual(b"example-packet", records[0].packet_bytes)
             self.assertEqual(1000.0, records[0].sample_rate)
+
+    def test_gps_timestamp_parsing_supports_debug_and_deploy_modes(self) -> None:
+        debug_ts = gps_timestamp_to_us("2026-04-09 13:30:32 000000010", "debug")
+        deploy_ts = gps_timestamp_to_us("20260409133032000000", "deploy")
+
+        self.assertEqual("20260409133032000000", format_timestamp_us(debug_ts))
+        self.assertEqual("20260409133032000000", format_timestamp_us(deploy_ts))
+
+    def test_runtime_uses_previous_frame_timestamp_when_gps_is_unavailable(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gps = GpsSettings(enabled=True, mode="debug", port="tty.usbmodem")
+        runtime._last_frame_end_us = 1_700_000_000_000_000
+        runtime._gps_time.current_time_us = Mock(return_value=None)  # type: ignore[method-assign]
+        runtime._gps_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GpsStatus(
+                enabled=True,
+                connected=False,
+                mode="debug",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=None,
+                last_error="gps offline",
+            )
+        )
+
+        frame = ChannelFrame(
+            sample_rate=100.0,
+            channels=np.zeros((8, 100), dtype=np.float64),
+            received_at=1_700_000_001.0,
+        )
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_001_000_000, timestamp_us)
+        self.assertTrue(used_fallback)
+        self.assertIn("gps offline", error or "")
+        runtime._datalink.close()
+
+    def test_web_api_exposes_runtime_status_and_ports(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime.gps_ports = Mock(return_value=["tty.usbmodem1101"])  # type: ignore[method-assign]
+        app = create_app(runtime)
+
+        with TestClient(app) as client:
+            status_response = client.get("/api/status")
+            self.assertEqual(200, status_response.status_code)
+            self.assertEqual("ok", status_response.json()["status"])
+
+            ports_response = client.get("/api/gps/ports")
+            self.assertEqual(200, ports_response.status_code)
+            self.assertEqual(["tty.usbmodem1101"], ports_response.json()["payload"])
+
+        runtime._datalink.close()
 
     def test_compute_psd_returns_frequency_axis(self) -> None:
         signal = np.sin(2 * np.pi * 5 * np.arange(256) / 100.0)

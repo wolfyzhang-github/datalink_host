@@ -103,7 +103,7 @@ class DataLinkPublisher:
                     channel_index=channel_index,
                     values=channels[channel_index],
                     sample_rate=sample_rate,
-                    received_at=frame.received_at,
+                    timestamp_us=frame.timestamp_us,
                     settings=settings,
                     storage_settings=storage_settings,
                 )
@@ -125,7 +125,7 @@ class DataLinkPublisher:
         channel_index: int,
         values: np.ndarray,
         sample_rate: float,
-        received_at: float,
+        timestamp_us: int | None,
         settings: DataLinkSettings | None = None,
         storage_settings: StorageSettings | None = None,
     ) -> list[tuple[bytes, str, float, float]]:
@@ -139,10 +139,14 @@ class DataLinkPublisher:
             settings=settings,
             storage_settings=storage_settings,
         )
-        values = np.asarray(values, dtype=np.float64)
+        values = np.asarray(values, dtype=np.float32)
         if values.size == 0:
             return []
-        start_time = received_at - (values.size / max(sample_rate, 1e-9))
+        if timestamp_us is None:
+            LOGGER.warning("Skipping DataLink publish because frame timestamp is unavailable")
+            return []
+        end_time_us = timestamp_us
+        start_time = (end_time_us / 1_000_000.0) - (values.size / max(sample_rate, 1e-9))
         payload = self._encode_miniseed_record(
             channel_index=channel_index,
             values=values,
@@ -150,7 +154,7 @@ class DataLinkPublisher:
             start_time=start_time,
             storage_settings=storage_settings,
         )
-        end_time = start_time + (values.size / max(sample_rate, 1e-9))
+        end_time = end_time_us / 1_000_000.0
         return [(payload, stream_id, start_time, end_time)]
 
     def _encode_miniseed_record(
@@ -162,7 +166,7 @@ class DataLinkPublisher:
         start_time: float,
         storage_settings: StorageSettings,
     ) -> bytes:
-        trace = Trace(np.asarray(values, dtype=np.float64))
+        trace = Trace(np.asarray(values, dtype=np.float32))
         trace.stats.network = storage_settings.network
         trace.stats.station = storage_settings.station
         trace.stats.location = storage_settings.location
@@ -174,7 +178,7 @@ class DataLinkPublisher:
         Stream([trace]).write(
             buffer,
             format="MSEED",
-            encoding="FLOAT64",
+            encoding="FLOAT32",
         )
         return buffer.getvalue()
 

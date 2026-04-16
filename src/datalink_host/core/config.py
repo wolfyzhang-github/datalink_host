@@ -45,7 +45,7 @@ class ProcessingSettings:
 class StorageSettings:
     enabled: bool = False
     root: Path = Path("./var/storage")
-    file_duration_seconds: int = 300
+    file_duration_seconds: int = 3600
     network: str = "SC"
     station: str = "S0001"
     location: str = "10"
@@ -75,6 +75,24 @@ class DataLinkSettings:
 
 
 @dataclass(slots=True)
+class GpsSettings:
+    enabled: bool = False
+    port: str = ""
+    baudrate: int = 115200
+    mode: str = "debug"
+    poll_interval_seconds: float = 0.1
+    serial_timeout_seconds: float = 0.1
+    command: str = "timestamp"
+
+
+@dataclass(slots=True)
+class WebSettings:
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 18080
+
+
+@dataclass(slots=True)
 class GuiSettings:
     refresh_interval_ms: int = 250
     max_points_per_trace: int = 4000
@@ -94,5 +112,7 @@ class AppSettings:
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
     storage: StorageSettings = field(default_factory=StorageSettings)
     datalink: DataLinkSettings = field(default_factory=DataLinkSettings)
+    gps: GpsSettings = field(default_factory=GpsSettings)
+    web: WebSettings = field(default_factory=WebSettings)
     gui: GuiSettings = field(default_factory=GuiSettings)
     capture: CaptureSettings = field(default_factory=CaptureSettings)

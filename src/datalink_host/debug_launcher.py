@@ -10,6 +10,7 @@ from datalink_host.core.config import AppSettings
 from datalink_host.core.logging import configure_logging
 from datalink_host.gui.main_window import MainWindow
 from datalink_host.services.runtime import RuntimeService
+from datalink_host.services.web_api import WebApiService
 from datalink_host.tools.receiver_sim import FakeDataLinkReceiver, ReceiverSettings
 from datalink_host.tools.sender_sim import SenderSettings, SyntheticSender
 
@@ -43,6 +44,7 @@ def main() -> int:
     settings.datalink.ack_required = True
 
     runtime = RuntimeService(settings)
+    web_api = WebApiService(runtime, settings.web)
     receiver: FakeDataLinkReceiver | None = None
     sender: SyntheticSender | None = None
 
@@ -57,6 +59,7 @@ def main() -> int:
         receiver.start()
 
     runtime.start()
+    web_api.start()
 
     if not args.no_sender:
         sender = SyntheticSender(
@@ -79,6 +82,7 @@ def main() -> int:
 
     if sender is not None:
         sender.stop()
+    web_api.stop()
     runtime.stop()
     if receiver is not None:
         receiver.stop()

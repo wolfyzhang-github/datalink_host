@@ -21,6 +21,7 @@ class ChannelFrame:
     sample_rate: float
     channels: np.ndarray
     received_at: float = field(default_factory=time)
+    timestamp_us: int | None = None
 
 
 @dataclass(slots=True)
@@ -41,6 +42,8 @@ class ProcessedFrame:
     data2_sample_rate: float
     # Time when this frame finished ingest on the host, as a Unix timestamp in seconds.
     received_at: float = field(default_factory=time)
+    # Authoritative frame end time in microseconds since Unix epoch.
+    timestamp_us: int | None = None
 
 
 @dataclass(slots=True)
@@ -62,6 +65,14 @@ class RuntimeSnapshot:
     datalink_last_error: str | None
     storage_enabled: bool
     capture_enabled: bool
+    gps_enabled: bool
+    gps_connected: bool
+    gps_mode: str
+    gps_port: str
+    gps_baudrate: int
+    gps_last_timestamp: str | None
+    gps_last_error: str | None
+    gps_fallback_active: bool
     latest_raw: np.ndarray | None
     latest_unwrapped: np.ndarray | None
     latest_data1: np.ndarray | None

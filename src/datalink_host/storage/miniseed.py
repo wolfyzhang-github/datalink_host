@@ -9,6 +9,7 @@ from obspy import Stream, Trace, UTCDateTime
 
 from datalink_host.core.config import StorageSettings
 from datalink_host.models.messages import ProcessedFrame
+from datalink_host.services.gps_time import format_timestamp_us
 
 
 LOGGER = logging.getLogger(__name__)
@@ -61,15 +62,18 @@ class MiniSeedWriter:
                     self._append_segment(
                         state=state,
                         values=np.asarray(channels[channel_index], dtype=np.float64),
-                        received_at=frame.received_at,
+                        timestamp_us=frame.timestamp_us,
                     )
                     self._flush_buffer(key, state, settings)
 
-    def _append_segment(self, state: _StreamBuffer, values: np.ndarray, received_at: float) -> None:
+    def _append_segment(self, state: _StreamBuffer, values: np.ndarray, timestamp_us: int | None) -> None:
         if values.size == 0:
             return
+        if timestamp_us is None:
+            LOGGER.warning("Skipping storage write because frame timestamp is unavailable")
+            return
         if state.next_segment_start is None:
-            state.next_segment_start = UTCDateTime(received_at) - (values.size / state.sample_rate)
+            state.next_segment_start = UTCDateTime(timestamp_us / 1_000_000.0) - (values.size / state.sample_rate)
         segment_start = state.next_segment_start
         state.next_segment_start = segment_start + (values.size / state.sample_rate)
         if state.data is None or state.data.size == 0:
@@ -111,7 +115,7 @@ class MiniSeedWriter:
         settings: StorageSettings,
     ) -> None:
         group_name, channel_index = key
-        output_dir = settings.root / group_name
+        output_dir = settings.root / f"{group_name.title()}-{channel_index + 1:02d}"
         output_dir.mkdir(parents=True, exist_ok=True)
         channel_code = settings.channel_codes[channel_index]
         timestamp = self._format_timestamp(start_time)
@@ -135,4 +139,4 @@ class MiniSeedWriter:
 
     @staticmethod
     def _format_timestamp(timestamp: UTCDateTime) -> str:
-        return timestamp.datetime.strftime("%Y%m%d%H%M%S%f")[:17]
+        return format_timestamp_us(timestamp.ns // 1000)
