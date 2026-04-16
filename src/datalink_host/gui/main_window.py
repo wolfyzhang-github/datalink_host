@@ -54,6 +54,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._datalink_send_data2_checkbox: QtWidgets.QCheckBox | None = None
         self._capture_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._capture_path_edit: QtWidgets.QLineEdit | None = None
+        self._gps_enabled_checkbox: QtWidgets.QCheckBox | None = None
+        self._gps_port_combo: QtWidgets.QComboBox | None = None
+        self._gps_baudrate_spin: QtWidgets.QSpinBox | None = None
+        self._gps_mode_combo: QtWidgets.QComboBox | None = None
+        self._gps_poll_spin: QtWidgets.QDoubleSpinBox | None = None
         self._analysis_channel_spin: QtWidgets.QSpinBox | None = None
         self._analysis_window_spin: QtWidgets.QSpinBox | None = None
         self._analysis_time_curve: pg.PlotDataItem | None = None
@@ -61,6 +66,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_view: QtWidgets.QPlainTextEdit | None = None
         self._log_level_combo: QtWidgets.QComboBox | None = None
         self._build_ui()
+        self._refresh_gps_ports()
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -101,6 +107,13 @@ class MainWindow(QtWidgets.QMainWindow):
             ("datalink_reconnects", "重连次数"),
             ("datalink_last_error", "远传错误"),
             ("capture_enabled", "抓包开关"),
+            ("gps_enabled", "GPS 开关"),
+            ("gps_connected", "GPS 连接"),
+            ("gps_mode", "GPS 模式"),
+            ("gps_port", "GPS 串口"),
+            ("gps_last_timestamp", "GPS 时间"),
+            ("gps_fallback_active", "GPS 回退"),
+            ("gps_last_error", "GPS 错误"),
             ("last_error", "最近错误"),
         ]
         for index, (name, label_text) in enumerate(fields):
@@ -245,6 +258,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self._capture_enabled_checkbox = QtWidgets.QCheckBox("启用抓包", widget)
         self._capture_enabled_checkbox.setChecked(self._settings.capture.enabled)
         self._capture_path_edit = QtWidgets.QLineEdit(str(self._settings.capture.path), widget)
+        self._gps_enabled_checkbox = QtWidgets.QCheckBox("启用 GPS 时间", widget)
+        self._gps_enabled_checkbox.setChecked(self._settings.gps.enabled)
+        self._gps_port_combo = QtWidgets.QComboBox(widget)
+        self._gps_port_combo.setEditable(True)
+        self._gps_port_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self._gps_baudrate_spin = QtWidgets.QSpinBox(widget)
+        self._gps_baudrate_spin.setRange(1, 921600)
+        self._gps_baudrate_spin.setValue(self._settings.gps.baudrate)
+        self._gps_mode_combo = QtWidgets.QComboBox(widget)
+        self._gps_mode_combo.addItem("调试模式", "debug")
+        self._gps_mode_combo.addItem("部署模式", "deploy")
+        self._gps_mode_combo.setCurrentIndex(0 if self._settings.gps.mode == "debug" else 1)
+        self._gps_poll_spin = QtWidgets.QDoubleSpinBox(widget)
+        self._gps_poll_spin.setRange(0.01, 10.0)
+        self._gps_poll_spin.setDecimals(2)
+        self._gps_poll_spin.setValue(self._settings.gps.poll_interval_seconds)
 
         apply_button = QtWidgets.QPushButton("保存配置", widget)
         apply_button.clicked.connect(self._apply_runtime_config)
@@ -260,6 +289,8 @@ class MainWindow(QtWidgets.QMainWindow):
         browse_button.clicked.connect(self._choose_storage_root)
         capture_browse_button = QtWidgets.QPushButton("抓包文件...", widget)
         capture_browse_button.clicked.connect(self._choose_capture_path)
+        gps_refresh_button = QtWidgets.QPushButton("刷新串口", widget)
+        gps_refresh_button.clicked.connect(self._refresh_gps_ports)
 
         layout.addWidget(QtWidgets.QLabel("降采样1 采样率"), 0, 0)
         layout.addWidget(self._data1_rate_spin, 0, 1)
@@ -311,8 +342,18 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._capture_enabled_checkbox, 12, 2)
         layout.addWidget(self._capture_path_edit, 12, 3)
         layout.addWidget(capture_browse_button, 12, 4)
-        layout.addWidget(apply_hint_label, 13, 0, 1, 4)
-        layout.addWidget(apply_button, 13, 4)
+        layout.addWidget(self._gps_enabled_checkbox, 13, 0)
+        layout.addWidget(QtWidgets.QLabel("GPS 串口"), 13, 1)
+        layout.addWidget(self._gps_port_combo, 13, 2)
+        layout.addWidget(gps_refresh_button, 13, 4)
+        layout.addWidget(QtWidgets.QLabel("GPS 波特率"), 14, 0)
+        layout.addWidget(self._gps_baudrate_spin, 14, 1)
+        layout.addWidget(QtWidgets.QLabel("GPS 模式"), 14, 2)
+        layout.addWidget(self._gps_mode_combo, 14, 3)
+        layout.addWidget(QtWidgets.QLabel("轮询间隔(秒)"), 15, 0)
+        layout.addWidget(self._gps_poll_spin, 15, 1)
+        layout.addWidget(apply_hint_label, 16, 0, 1, 4)
+        layout.addWidget(apply_button, 16, 4)
         return widget
 
     def _build_plot_grid(self) -> QtWidgets.QWidget:
@@ -406,6 +447,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if filename:
             self._capture_path_edit.setText(filename)
 
+    def _refresh_gps_ports(self) -> None:
+        if self._gps_port_combo is None:
+            return
+        current = self._gps_port_combo.currentText().strip()
+        ports = self._runtime.gps_ports()
+        self._gps_port_combo.blockSignals(True)
+        self._gps_port_combo.clear()
+        for port in ports:
+            self._gps_port_combo.addItem(port)
+        if current:
+            if current not in ports:
+                self._gps_port_combo.addItem(current)
+            self._gps_port_combo.setCurrentText(current)
+        self._gps_port_combo.blockSignals(False)
+
     def _apply_runtime_config(self) -> None:
         assert self._data1_rate_spin is not None
         assert self._data2_rate_spin is not None
@@ -434,6 +490,11 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_send_data2_checkbox is not None
         assert self._capture_enabled_checkbox is not None
         assert self._capture_path_edit is not None
+        assert self._gps_enabled_checkbox is not None
+        assert self._gps_port_combo is not None
+        assert self._gps_baudrate_spin is not None
+        assert self._gps_mode_combo is not None
+        assert self._gps_poll_spin is not None
 
         payload = {
             "processing": {
@@ -474,6 +535,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "capture": {
                 "enabled": self._capture_enabled_checkbox.isChecked(),
                 "path": self._capture_path_edit.text().strip() or "./var/captures/session.dlhcap",
+            },
+            "gps": {
+                "enabled": self._gps_enabled_checkbox.isChecked(),
+                "port": self._gps_port_combo.currentText().strip(),
+                "baudrate": self._gps_baudrate_spin.value(),
+                "mode": self._gps_mode_combo.currentData(),
+                "poll_interval_seconds": self._gps_poll_spin.value(),
             },
         }
         try:
@@ -522,6 +590,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "datalink_reconnects": str(snapshot.datalink_reconnects),
             "datalink_last_error": snapshot.datalink_last_error or "-",
             "capture_enabled": str(snapshot.capture_enabled),
+            "gps_enabled": str(snapshot.gps_enabled),
+            "gps_connected": str(snapshot.gps_connected),
+            "gps_mode": snapshot.gps_mode,
+            "gps_port": snapshot.gps_port or "-",
+            "gps_last_timestamp": snapshot.gps_last_timestamp or "-",
+            "gps_fallback_active": str(snapshot.gps_fallback_active),
+            "gps_last_error": snapshot.gps_last_error or "-",
             "last_error": snapshot.last_error or "-",
         }
         for key, label in self._status_labels.items():
