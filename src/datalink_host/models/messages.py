@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from time import time
+from time import monotonic, time
 from typing import Any
 
 import numpy as np
@@ -22,6 +22,7 @@ class ChannelFrame:
     channels: np.ndarray
     received_at: float = field(default_factory=time)
     timestamp_us: int | None = None
+    enqueued_at_monotonic: float = field(default_factory=monotonic)
 
 
 @dataclass(slots=True)

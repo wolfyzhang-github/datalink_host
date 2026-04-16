@@ -7,7 +7,7 @@ import socket
 import threading
 import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from obspy import Stream, Trace, UTCDateTime
@@ -19,6 +19,10 @@ from datalink_host.models.messages import ProcessedFrame
 
 LOGGER = logging.getLogger(__name__)
 PUBLISH_QUEUE_MAXSIZE = 512
+SEND_QUEUE_BACKLOG_WARNING_DEPTH = 64
+PUBLISH_SERIALIZATION_WARNING_MS = 100.0
+SEND_QUEUE_WAIT_WARNING_MS = 500.0
+SEND_PACKET_WARNING_MS = 200.0
 
 
 @dataclass(slots=True)
@@ -28,6 +32,7 @@ class PendingDataLinkPacket:
     start_time: float
     end_time: float
     ack_required: bool
+    enqueued_at_monotonic: float = field(default_factory=time.monotonic)
 
 
 @dataclass(slots=True)
@@ -83,6 +88,7 @@ class DataLinkPublisher:
             )
 
     def publish(self, frame: ProcessedFrame) -> None:
+        publish_started_at = time.monotonic()
         with self._lock:
             settings = deepcopy(self._settings)
             storage_settings = deepcopy(self._storage_settings)
@@ -94,6 +100,8 @@ class DataLinkPublisher:
         if not outputs:
             return
 
+        packet_count = 0
+        payload_bytes = 0
         for group_name, channels, sample_rate in outputs:
             if sample_rate <= 0:
                 continue
@@ -108,6 +116,8 @@ class DataLinkPublisher:
                     storage_settings=storage_settings,
                 )
                 for payload, stream_id, start_time, end_time in packets:
+                    packet_count += 1
+                    payload_bytes += len(payload)
                     self._enqueue_packet(
                         PendingDataLinkPacket(
                             stream_id=stream_id,
@@ -117,6 +127,23 @@ class DataLinkPublisher:
                             ack_required=settings.ack_required,
                         )
                     )
+        serialization_ms = (time.monotonic() - publish_started_at) * 1000.0
+        send_queue_depth = self._send_queue.qsize()
+        if (
+            serialization_ms >= PUBLISH_SERIALIZATION_WARNING_MS
+            or send_queue_depth >= SEND_QUEUE_BACKLOG_WARNING_DEPTH
+        ):
+            LOGGER.warning(
+                "DataLink publish is lagging: serialization_ms=%.1f, send_queue_depth=%s, packets=%s, "
+                "payload_bytes=%s, data1_shape=%s, data2_shape=%s, ack_required=%s",
+                serialization_ms,
+                send_queue_depth,
+                packet_count,
+                payload_bytes,
+                frame.data1.shape,
+                frame.data2.shape,
+                settings.ack_required,
+            )
 
     def _serialize_channel_packets(
         self,
@@ -262,6 +289,15 @@ class DataLinkPublisher:
     def _enqueue_packet(self, item: PendingDataLinkPacket) -> None:
         try:
             self._send_queue.put_nowait(item)
+            queue_depth = self._send_queue.qsize()
+            if (
+                queue_depth >= SEND_QUEUE_BACKLOG_WARNING_DEPTH
+                and queue_depth % SEND_QUEUE_BACKLOG_WARNING_DEPTH == 0
+            ):
+                LOGGER.warning(
+                    "DataLink send queue backlog is %s packets; outbound traffic is slower than publish",
+                    queue_depth,
+                )
         except queue.Full:
             with self._lock:
                 self._stats.last_error = "DataLink send queue is full"
@@ -306,9 +342,28 @@ class DataLinkPublisher:
                         break
                     continue
                 current_item = item
+            send_started_at = time.monotonic()
+            queue_wait_ms = (send_started_at - current_item.enqueued_at_monotonic) * 1000.0
             try:
                 with self._lock:
                     self._write_packet_locked(current_item)
+                send_ms = (time.monotonic() - send_started_at) * 1000.0
+                queue_depth_after = self._send_queue.qsize()
+                if (
+                    queue_wait_ms >= SEND_QUEUE_WAIT_WARNING_MS
+                    or send_ms >= SEND_PACKET_WARNING_MS
+                    or queue_depth_after >= SEND_QUEUE_BACKLOG_WARNING_DEPTH
+                ):
+                    LOGGER.warning(
+                        "DataLink sender is lagging: stream_id=%s, queue_wait_ms=%.1f, send_ms=%.1f, "
+                        "queue_depth_after=%s, payload_bytes=%s, ack_required=%s",
+                        current_item.stream_id,
+                        queue_wait_ms,
+                        send_ms,
+                        queue_depth_after,
+                        len(current_item.payload),
+                        current_item.ack_required,
+                    )
                 current_item = None
             except Exception as exc:  # noqa: BLE001
                 with self._lock:

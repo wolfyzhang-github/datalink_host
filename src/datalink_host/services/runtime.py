@@ -24,6 +24,9 @@ from datalink_host.transport.datalink import DataLinkPublisher
 
 LOGGER = logging.getLogger(__name__)
 QUEUE_BACKLOG_WARNING_DEPTH = 8
+FRAME_QUEUE_WAIT_WARNING_MS = 200.0
+FRAME_PROCESSING_WARNING_MS = 200.0
+FAN_OUT_WARNING_MS = 200.0
 
 
 class RuntimeService:
@@ -512,8 +515,14 @@ class RuntimeService:
             except queue.Empty:
                 continue
             try:
+                processing_started_at = time.monotonic()
+                queue_wait_ms = (processing_started_at - frame.enqueued_at_monotonic) * 1000.0
                 processed = self._pipeline.process(frame)
-                self._fan_out(processed)
+                pipeline_ms = (time.monotonic() - processing_started_at) * 1000.0
+                fan_out_started_at = time.monotonic()
+                storage_ms, datalink_publish_ms = self._fan_out(processed)
+                fan_out_ms = (time.monotonic() - fan_out_started_at) * 1000.0
+                total_ms = (time.monotonic() - processing_started_at) * 1000.0
                 self._frames_processed += 1
                 if self._frames_processed == 1:
                     LOGGER.info(
@@ -523,25 +532,54 @@ class RuntimeService:
                         processed.data1.shape,
                         processed.data2.shape,
                     )
+                queue_depth_after = self._queue.qsize()
+                if (
+                    queue_wait_ms >= FRAME_QUEUE_WAIT_WARNING_MS
+                    or pipeline_ms >= FRAME_PROCESSING_WARNING_MS
+                    or fan_out_ms >= FAN_OUT_WARNING_MS
+                ):
+                    LOGGER.warning(
+                        "Frame processing is lagging: queue_wait_ms=%.1f, pipeline_ms=%.1f, storage_ms=%.1f, "
+                        "datalink_publish_ms=%.1f, fan_out_ms=%.1f, total_ms=%.1f, queue_depth_after=%s, "
+                        "sample_rate=%.3f, raw_shape=%s, data1_shape=%s, data2_shape=%s",
+                        queue_wait_ms,
+                        pipeline_ms,
+                        storage_ms,
+                        datalink_publish_ms,
+                        fan_out_ms,
+                        total_ms,
+                        queue_depth_after,
+                        processed.sample_rate,
+                        processed.raw.shape,
+                        processed.data1.shape,
+                        processed.data2.shape,
+                    )
                 with self._lock:
                     self._snapshot.latest_raw = processed.raw
                     self._snapshot.latest_unwrapped = processed.unwrapped
                     self._snapshot.latest_data1 = processed.data1
                     self._snapshot.latest_data2 = processed.data2
-                    self._snapshot.queue_depth = self._queue.qsize()
+                    self._snapshot.queue_depth = queue_depth_after
                     self._snapshot.updated_at = time.time()
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Processing pipeline failed")
                 self._set_error(f"Processing pipeline failed: {exc}")
 
-    def _fan_out(self, frame: ProcessedFrame) -> None:
+    def _fan_out(self, frame: ProcessedFrame) -> tuple[float, float]:
+        storage_ms = 0.0
+        datalink_publish_ms = 0.0
         if self._settings.storage.enabled:
+            storage_started_at = time.monotonic()
             self._storage.write(frame)
+            storage_ms = (time.monotonic() - storage_started_at) * 1000.0
         if self._settings.datalink.enabled:
             try:
+                publish_started_at = time.monotonic()
                 self._datalink.publish(frame)
+                datalink_publish_ms = (time.monotonic() - publish_started_at) * 1000.0
             except Exception as exc:  # noqa: BLE001
                 self._set_error(f"DataLink publish failed: {exc}")
+        return storage_ms, datalink_publish_ms
 
     def _set_data_connected(self, connected: bool) -> None:
         with self._lock:
