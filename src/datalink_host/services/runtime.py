@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import logging
 import queue
 import threading
@@ -27,6 +28,8 @@ QUEUE_BACKLOG_WARNING_DEPTH = 8
 FRAME_QUEUE_WAIT_WARNING_MS = 200.0
 FRAME_PROCESSING_WARNING_MS = 200.0
 FAN_OUT_WARNING_MS = 200.0
+MONITOR_PACKET_HISTORY_LIMIT = 40
+MONITOR_PACKET_DUMP_LIMIT_BYTES = 1024
 
 
 class RuntimeService:
@@ -84,6 +87,7 @@ class RuntimeService:
         self._frames_enqueued = 0
         self._frames_processed = 0
         self._last_frame_end_us: int | None = None
+        self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -234,6 +238,27 @@ class RuntimeService:
                     "path": str(self._settings.capture.path),
                 },
             }
+
+    def monitor_view(self, mode: str = "raw", *, max_points: int = 1200, max_packets: int = 20) -> dict[str, Any]:
+        snapshot = self.snapshot()
+        data, sample_rate = self._series_for_monitor(snapshot, mode=mode, max_points=max_points)
+        with self._lock:
+            recent_packets = [dict(packet) for packet in list(self._recent_packets)[-max_packets:]]
+            channel_codes = list(self._settings.storage.channel_codes)
+            protocol_channels = self._settings.protocol.channels
+        return {
+            "processing_active": self.is_processing_active(),
+            "channel_codes": channel_codes[:protocol_channels],
+            "waveform": {
+                "mode": mode,
+                "sample_rate": sample_rate,
+                "channels": int(data.shape[0]) if data is not None else protocol_channels,
+                "points": int(data.shape[1]) if data is not None else 0,
+                "series": data.tolist() if data is not None else [],
+                "updated_at": snapshot.updated_at,
+            },
+            "recent_packets": recent_packets,
+        }
 
     def update_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         if "data1_rate" in payload or "data2_rate" in payload:
@@ -444,6 +469,18 @@ class RuntimeService:
                 sample_rate=packet.sample_rate,
                 payload_bytes=packet.payload_bytes,
                 packet_bytes=packet.raw_bytes,
+            )
+        hex_dump, truncated_bytes = format_packet_hex_dump(packet.raw_bytes)
+        with self._lock:
+            self._recent_packets.append(
+                {
+                    "received_at": packet.received_at,
+                    "sample_rate": packet.sample_rate,
+                    "payload_bytes": packet.payload_bytes,
+                    "raw_bytes": len(packet.raw_bytes),
+                    "hex_dump": hex_dump,
+                    "truncated_bytes": truncated_bytes,
+                }
             )
 
     def _on_frame(self, frame: ChannelFrame) -> None:
@@ -656,6 +693,22 @@ class RuntimeService:
 
         raise ValueError(f"Unsupported control message type: {message_type}")
 
+    def _series_for_monitor(
+        self,
+        snapshot: RuntimeSnapshot,
+        *,
+        mode: str,
+        max_points: int,
+    ) -> tuple[np.ndarray | None, float | None]:
+        mode_name = mode if mode in {"raw", "unwrapped", "data1", "data2"} else "raw"
+        if mode_name == "raw":
+            return slice_for_plot(snapshot.latest_raw, max_points), snapshot.source_sample_rate
+        if mode_name == "data1":
+            return slice_for_plot(snapshot.latest_data1, max_points), snapshot.data1_rate
+        if mode_name == "data2":
+            return slice_for_plot(snapshot.latest_data2, max_points), snapshot.data2_rate
+        return slice_for_plot(snapshot.latest_unwrapped, max_points), snapshot.source_sample_rate
+
 
 def slice_for_plot(data: np.ndarray | None, max_points: int) -> np.ndarray | None:
     if data is None or data.size == 0:
@@ -663,3 +716,14 @@ def slice_for_plot(data: np.ndarray | None, max_points: int) -> np.ndarray | Non
     if data.shape[1] <= max_points:
         return data
     return data[:, -max_points:]
+
+
+def format_packet_hex_dump(packet_bytes: bytes, max_bytes: int = MONITOR_PACKET_DUMP_LIMIT_BYTES) -> tuple[str, int]:
+    visible = packet_bytes[:max_bytes]
+    lines: list[str] = []
+    for offset in range(0, len(visible), 16):
+        chunk = visible[offset : offset + 16]
+        hex_part = " ".join(f"{value:02X}" for value in chunk)
+        ascii_part = "".join(chr(value) if 32 <= value <= 126 else "." for value in chunk)
+        lines.append(f"{offset:06X}  {hex_part:<47}  {ascii_part}")
+    return "\n".join(lines), max(len(packet_bytes) - len(visible), 0)

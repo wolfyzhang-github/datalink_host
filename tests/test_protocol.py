@@ -25,7 +25,7 @@ from datalink_host.core.logging import configure_logging, get_recent_logs
 from datalink_host.debug.capture import PacketCaptureWriter, read_capture
 from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.ingest.protocol import PacketDecoder, build_packet, packet_to_frame
-from datalink_host.models.messages import ChannelFrame, ProcessedFrame
+from datalink_host.models.messages import ChannelFrame, ProcessedFrame, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline, compute_psd
 from datalink_host.services.gps_time import GpsStatus, format_timestamp_us, gps_timestamp_to_us
 from datalink_host.services.runtime import RuntimeService
@@ -771,6 +771,69 @@ class ProtocolTests(unittest.TestCase):
             ports_response = client.get("/api/gps/ports")
             self.assertEqual(200, ports_response.status_code)
             self.assertEqual(["tty.usbmodem1101"], ports_response.json()["payload"])
+
+        runtime._datalink.close()
+
+    def test_runtime_monitor_view_includes_packet_dump_and_waveform(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._on_packet(
+            TcpPacket(
+                sample_rate=1000.0,
+                payload_bytes=16,
+                payload=b"\x01\x02\x03\x04",
+                raw_bytes=b"\x01\x02\x03\x04DATA",
+            )
+        )
+        with runtime._lock:
+            runtime._snapshot.source_sample_rate = 1000.0
+            runtime._snapshot.latest_raw = np.array(
+                [
+                    [1.0, 2.0, 3.0],
+                    [4.0, 5.0, 6.0],
+                ],
+                dtype=np.float64,
+            )
+
+        payload = runtime.monitor_view(mode="raw", max_points=2, max_packets=10)
+
+        self.assertTrue(payload["recent_packets"])
+        self.assertEqual(2, payload["waveform"]["points"])
+        self.assertEqual([[2.0, 3.0], [5.0, 6.0]], payload["waveform"]["series"])
+        self.assertIn("000000", payload["recent_packets"][0]["hex_dump"])
+        runtime._datalink.close()
+
+    def test_web_api_exposes_monitor_and_processing_controls(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime.resume_processing = Mock()  # type: ignore[method-assign]
+        runtime.pause_processing = Mock()  # type: ignore[method-assign]
+        runtime._on_packet(
+            TcpPacket(
+                sample_rate=200.0,
+                payload_bytes=8,
+                payload=b"\x00\x01",
+                raw_bytes=b"\x00\x01packet",
+            )
+        )
+        with runtime._lock:
+            runtime._snapshot.source_sample_rate = 200.0
+            runtime._snapshot.latest_raw = np.ones((8, 4), dtype=np.float64)
+        app = create_app(runtime)
+
+        with TestClient(app) as client:
+            monitor_response = client.get("/api/monitor?mode=raw&max_points=512&max_packets=5")
+            self.assertEqual(200, monitor_response.status_code)
+            monitor_payload = monitor_response.json()["payload"]
+            self.assertIn("status", monitor_payload)
+            self.assertIn("recent_packets", monitor_payload)
+            self.assertEqual(4, monitor_payload["waveform"]["points"])
+
+            start_response = client.post("/api/processing/start")
+            self.assertEqual(200, start_response.status_code)
+            runtime.resume_processing.assert_called_once()
+
+            stop_response = client.post("/api/processing/stop")
+            self.assertEqual(200, stop_response.status_code)
+            runtime.pause_processing.assert_called_once()
 
         runtime._datalink.close()
 
