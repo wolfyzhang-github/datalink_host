@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import queue
+import re
 import socket
 import threading
 import time
@@ -23,6 +24,16 @@ SEND_QUEUE_BACKLOG_WARNING_DEPTH = 64
 PUBLISH_SERIALIZATION_WARNING_MS = 100.0
 SEND_QUEUE_WAIT_WARNING_MS = 500.0
 SEND_PACKET_WARNING_MS = 200.0
+DEFAULT_DATALINK_PACKET_SIZE = 512
+MIN_MSEED_RECORD_LENGTH = 256
+MAX_MSEED_RECORD_LENGTH = 4096
+PACKETSIZE_PATTERN = re.compile(r"PACKETSIZE(?:\s*[:=]\s*|\s+)(\d+)")
+
+
+class DataLinkSendError(RuntimeError):
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(slots=True)
@@ -53,6 +64,7 @@ class DataLinkPublisher:
         self._lock = threading.Lock()
         self._stats = DataLinkStats()
         self._warned_group_suffix = False
+        self._server_packet_size_bytes: int | None = None
         self._send_queue: queue.Queue[PendingDataLinkPacket | None] = queue.Queue(maxsize=PUBLISH_QUEUE_MAXSIZE)
         self._stop_event = threading.Event()
         self._worker = threading.Thread(target=self._run_sender, name="datalink-publisher", daemon=True)
@@ -64,6 +76,8 @@ class DataLinkPublisher:
             self._settings = deepcopy(settings)
             self._storage_settings = deepcopy(storage_settings)
             if host_changed or not settings.enabled:
+                if host_changed:
+                    self._server_packet_size_bytes = None
                 self._close_socket_locked()
         if not settings.enabled:
             self._clear_queue()
@@ -92,6 +106,7 @@ class DataLinkPublisher:
         with self._lock:
             settings = deepcopy(self._settings)
             storage_settings = deepcopy(self._storage_settings)
+            max_payload_bytes = self._server_packet_size_bytes or DEFAULT_DATALINK_PACKET_SIZE
         outputs: list[tuple[str, np.ndarray, float]] = []
         if frame.data1.size > 0:
             outputs.append(("data1", frame.data1, frame.data1_sample_rate))
@@ -114,6 +129,7 @@ class DataLinkPublisher:
                     timestamp_us=frame.timestamp_us,
                     settings=settings,
                     storage_settings=storage_settings,
+                    max_payload_bytes=max_payload_bytes,
                 )
                 for payload, stream_id, start_time, end_time in packets:
                     packet_count += 1
@@ -155,11 +171,16 @@ class DataLinkPublisher:
         timestamp_us: int | None,
         settings: DataLinkSettings | None = None,
         storage_settings: StorageSettings | None = None,
+        max_payload_bytes: int | None = None,
     ) -> list[tuple[bytes, str, float, float]]:
         if settings is None or storage_settings is None:
             with self._lock:
                 settings = deepcopy(self._settings)
                 storage_settings = deepcopy(self._storage_settings)
+                max_payload_bytes = max_payload_bytes or self._server_packet_size_bytes or DEFAULT_DATALINK_PACKET_SIZE
+        elif max_payload_bytes is None:
+            with self._lock:
+                max_payload_bytes = self._server_packet_size_bytes or DEFAULT_DATALINK_PACKET_SIZE
         stream_id = self._stream_id_for(
             group_name=group_name,
             channel_index=channel_index,
@@ -174,15 +195,15 @@ class DataLinkPublisher:
             return []
         end_time_us = timestamp_us
         start_time = (end_time_us / 1_000_000.0) - (values.size / max(sample_rate, 1e-9))
-        payload = self._encode_miniseed_record(
+        packets = self._encode_miniseed_packets(
             channel_index=channel_index,
             values=values,
             sample_rate=sample_rate,
             start_time=start_time,
             storage_settings=storage_settings,
+            max_payload_bytes=max_payload_bytes,
         )
-        end_time = end_time_us / 1_000_000.0
-        return [(payload, stream_id, start_time, end_time)]
+        return [(payload, stream_id, packet_start, packet_end) for payload, packet_start, packet_end in packets]
 
     def _encode_miniseed_record(
         self,
@@ -192,6 +213,7 @@ class DataLinkPublisher:
         sample_rate: float,
         start_time: float,
         storage_settings: StorageSettings,
+        record_length_bytes: int,
     ) -> bytes:
         trace = Trace(np.asarray(values, dtype=np.float32))
         trace.stats.network = storage_settings.network
@@ -206,8 +228,68 @@ class DataLinkPublisher:
             buffer,
             format="MSEED",
             encoding="FLOAT32",
+            reclen=record_length_bytes,
         )
         return buffer.getvalue()
+
+    def _encode_miniseed_packets(
+        self,
+        *,
+        channel_index: int,
+        values: np.ndarray,
+        sample_rate: float,
+        start_time: float,
+        storage_settings: StorageSettings,
+        max_payload_bytes: int,
+    ) -> list[tuple[bytes, float, float]]:
+        record_length_bytes = self._preferred_record_length_bytes(max_payload_bytes)
+        payload = self._encode_miniseed_record(
+            channel_index=channel_index,
+            values=values,
+            sample_rate=sample_rate,
+            start_time=start_time,
+            storage_settings=storage_settings,
+            record_length_bytes=record_length_bytes,
+        )
+        end_time = start_time + (values.size / max(sample_rate, 1e-9))
+        if len(payload) <= max_payload_bytes:
+            return [(payload, start_time, end_time)]
+        if values.size <= 1:
+            raise DataLinkSendError(
+                f"MiniSEED payload exceeds DataLink packet limit: payload_bytes={len(payload)}, "
+                f"limit_bytes={max_payload_bytes}",
+                retryable=False,
+            )
+        split_index = max(1, values.size // 2)
+        first_values = values[:split_index]
+        second_values = values[split_index:]
+        second_start_time = start_time + (split_index / max(sample_rate, 1e-9))
+        return [
+            *self._encode_miniseed_packets(
+                channel_index=channel_index,
+                values=first_values,
+                sample_rate=sample_rate,
+                start_time=start_time,
+                storage_settings=storage_settings,
+                max_payload_bytes=max_payload_bytes,
+            ),
+            *self._encode_miniseed_packets(
+                channel_index=channel_index,
+                values=second_values,
+                sample_rate=sample_rate,
+                start_time=second_start_time,
+                storage_settings=storage_settings,
+                max_payload_bytes=max_payload_bytes,
+            ),
+        ]
+
+    @staticmethod
+    def _preferred_record_length_bytes(max_payload_bytes: int) -> int:
+        record_length = MIN_MSEED_RECORD_LENGTH
+        capped_limit = max(MIN_MSEED_RECORD_LENGTH, min(max_payload_bytes, MAX_MSEED_RECORD_LENGTH))
+        while record_length * 2 <= capped_limit:
+            record_length *= 2
+        return record_length
 
     def _stream_id_for(
         self,
@@ -248,9 +330,10 @@ class DataLinkPublisher:
             if item.ack_required:
                 response_header, response_payload = self._read_packet(sock)
                 if not response_header.startswith("OK "):
-                    raise RuntimeError(
+                    raise DataLinkSendError(
                         f"Unexpected DataLink response: "
-                        f"{self._format_status_response(response_header, response_payload)}"
+                        f"{self._format_status_response(response_header, response_payload)}",
+                        retryable=False,
                     )
             self._stats.packets_sent += 1
             self._stats.bytes_sent += len(item.payload)
@@ -273,11 +356,23 @@ class DataLinkPublisher:
         response_header, _ = self._read_packet(sock)
         if not response_header.startswith("ID DataLink"):
             sock.close()
-            raise RuntimeError(f"Unexpected DataLink server identification: {response_header}")
+            raise DataLinkSendError(
+                f"Unexpected DataLink server identification: {response_header}",
+                retryable=False,
+            )
+        self._server_packet_size_bytes = self._parse_packet_size(response_header)
         self._socket = sock
         self._stats.connected = True
         self._stats.reconnects += 1
-        LOGGER.info("Connected to DataLink server %s:%s", self._settings.host, self._settings.port)
+        if self._server_packet_size_bytes is None:
+            LOGGER.info("Connected to DataLink server %s:%s", self._settings.host, self._settings.port)
+        else:
+            LOGGER.info(
+                "Connected to DataLink server %s:%s (PACKETSIZE=%s bytes)",
+                self._settings.host,
+                self._settings.port,
+                self._server_packet_size_bytes,
+            )
         return sock
 
     def _close_socket_locked(self) -> None:
@@ -372,6 +467,14 @@ class DataLinkPublisher:
                 with self._lock:
                     self._stats.last_error = str(exc)
                 LOGGER.error("DataLink publish failed: %s", exc)
+                retryable = getattr(exc, "retryable", isinstance(exc, OSError))
+                if not retryable:
+                    LOGGER.warning(
+                        "Dropping DataLink packet for %s after permanent error",
+                        current_item.stream_id,
+                    )
+                    current_item = None
+                    continue
                 retry_delay = self._retry_delay_seconds()
                 if retry_delay < 0:
                     current_item = None
@@ -430,3 +533,11 @@ class DataLinkPublisher:
             return header
         message = payload.decode("utf-8", errors="replace").strip()
         return f"{header} | {message}" if message else header
+
+    @staticmethod
+    def _parse_packet_size(response_header: str) -> int | None:
+        match = PACKETSIZE_PATTERN.search(response_header)
+        if match is None:
+            return None
+        packet_size = int(match.group(1))
+        return packet_size if packet_size > 0 else None

@@ -13,6 +13,12 @@ from datalink_host.processing.pipeline import compute_psd
 from datalink_host.services.runtime import RuntimeService, slice_for_plot
 
 
+def recommended_window_size(available_width: int, available_height: int) -> tuple[int, int]:
+    width = min(1400, max(960, int(available_width * 0.92)))
+    height = min(900, max(680, int(available_height * 0.92)))
+    return min(width, available_width), min(height, available_height)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, runtime: RuntimeService, settings: AppSettings) -> None:
         super().__init__()
@@ -20,7 +26,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings = settings
         self._data_mode = "unwrapped"
         self.setWindowTitle("长基线光纤应变信号监控软件")
-        self.resize(1400, 900)
         self._status_labels: dict[str, QtWidgets.QLabel] = {}
         self._plots: list[pg.PlotDataItem] = []
         self._processing_state_label: QtWidgets.QLabel | None = None
@@ -66,6 +71,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_view: QtWidgets.QPlainTextEdit | None = None
         self._log_level_combo: QtWidgets.QComboBox | None = None
         self._build_ui()
+        self._configure_window_geometry()
         self._refresh_gps_ports()
 
         self._timer = QtCore.QTimer(self)
@@ -75,10 +81,29 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_ui(self) -> None:
         central = QtWidgets.QWidget(self)
         root = QtWidgets.QVBoxLayout(central)
-        root.addLayout(self._build_status_bar())
-        root.addLayout(self._build_controls())
-        root.addWidget(self._build_config_panel())
-        root.addWidget(self._build_tabs(), stretch=1)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, central)
+        splitter.setChildrenCollapsible(False)
+
+        overview_scroll = QtWidgets.QScrollArea(splitter)
+        overview_scroll.setWidgetResizable(True)
+        overview_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        overview = QtWidgets.QWidget(overview_scroll)
+        overview_layout = QtWidgets.QVBoxLayout(overview)
+        overview_layout.setContentsMargins(0, 0, 0, 0)
+        overview_layout.addWidget(self._build_status_panel())
+        overview_layout.addLayout(self._build_controls())
+        overview_layout.addWidget(self._build_config_panel())
+        overview_layout.addStretch(1)
+        overview_scroll.setWidget(overview)
+
+        splitter.addWidget(overview_scroll)
+        splitter.addWidget(self._build_tabs())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([360, 540])
+
+        root.addWidget(splitter)
         self.setCentralWidget(central)
 
     def _build_tabs(self) -> QtWidgets.QWidget:
@@ -88,8 +113,22 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._build_logs_tab(), "日志")
         return tabs
 
-    def _build_status_bar(self) -> QtWidgets.QLayout:
-        layout = QtWidgets.QGridLayout()
+    def _configure_window_geometry(self) -> None:
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1280, 820)
+            return
+        available = screen.availableGeometry()
+        width, height = recommended_window_size(available.width(), available.height())
+        self.resize(width, height)
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
+
+    def _build_status_panel(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QGroupBox("运行状态", self)
+        layout = QtWidgets.QGridLayout(widget)
+        status_columns = 3
         fields = [
             ("data_connected", "数据连接"),
             ("control_connected", "控制连接"),
@@ -118,14 +157,24 @@ class MainWindow(QtWidgets.QMainWindow):
         ]
         for index, (name, label_text) in enumerate(fields):
             label = QtWidgets.QLabel("-")
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+            label.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
             self._status_labels[name] = label
-            layout.addWidget(QtWidgets.QLabel(label_text), index // 4, (index % 4) * 2)
-            layout.addWidget(label, index // 4, (index % 4) * 2 + 1)
-        return layout
+            row = index // status_columns
+            column = index % status_columns
+            layout.addWidget(QtWidgets.QLabel(label_text), row, column * 2)
+            layout.addWidget(label, row, column * 2 + 1)
+        for column in range(status_columns):
+            layout.setColumnStretch(column * 2 + 1, 1)
+        return widget
 
     def _build_controls(self) -> QtWidgets.QLayout:
         layout = QtWidgets.QVBoxLayout()
-        top_row = QtWidgets.QHBoxLayout()
+        mode_row = QtWidgets.QHBoxLayout()
         button_group = QtWidgets.QButtonGroup(self)
         for name, text in (
             ("raw", "原始"),
@@ -138,7 +187,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 button.setChecked(True)
             button.toggled.connect(partial(self._set_mode, name))
             button_group.addButton(button)
-            top_row.addWidget(button)
+            mode_row.addWidget(button)
+        mode_row.addStretch(1)
         self._processing_state_label = QtWidgets.QLabel(self)
         self._start_processing_button = QtWidgets.QPushButton("启动数据接收", self)
         self._pause_processing_button = QtWidgets.QPushButton("停止数据接收", self)
@@ -150,18 +200,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pause_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
         self._start_processing_button.setToolTip("启动 TCP 数据接收；若配置已修改，将按当前配置重新开始接收。")
         self._pause_processing_button.setToolTip("停止 TCP 数据接收，但不会关闭界面，也不会清空已显示的数据。")
-        top_row.addSpacing(24)
-        top_row.addWidget(self._processing_state_label)
-        top_row.addWidget(self._start_processing_button)
-        top_row.addWidget(self._pause_processing_button)
-        top_row.addStretch(1)
+        action_row = QtWidgets.QHBoxLayout()
+        action_row.addWidget(self._processing_state_label)
+        action_row.addWidget(self._start_processing_button)
+        action_row.addWidget(self._pause_processing_button)
+        action_row.addStretch(1)
         self._ingest_help_label = QtWidgets.QLabel(
             "上方按钮只控制数据接收是否运行。下方“保存配置”只修改配置：运行中保存会自动重连，停止时保存不会自动启动。",
             self,
         )
         self._ingest_help_label.setWordWrap(True)
         self._ingest_help_label.setStyleSheet("color: #555;")
-        layout.addLayout(top_row)
+        layout.addLayout(mode_row)
+        layout.addLayout(action_row)
         layout.addWidget(self._ingest_help_label)
         self._update_processing_controls()
         return layout
@@ -354,6 +405,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._gps_poll_spin, 15, 1)
         layout.addWidget(apply_hint_label, 16, 0, 1, 4)
         layout.addWidget(apply_button, 16, 4)
+        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(3, 1)
         return widget
 
     def _build_plot_grid(self) -> QtWidgets.QWidget:

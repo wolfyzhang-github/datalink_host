@@ -31,7 +31,7 @@ from datalink_host.services.gps_time import GpsStatus, format_timestamp_us, gps_
 from datalink_host.services.runtime import RuntimeService
 from datalink_host.services.web_api import create_app
 from datalink_host.storage.miniseed import MiniSeedWriter
-from datalink_host.transport.datalink import DataLinkPublisher, PendingDataLinkPacket
+from datalink_host.transport.datalink import DataLinkPublisher, DataLinkSendError, PendingDataLinkPacket
 
 
 class ProtocolTests(unittest.TestCase):
@@ -453,6 +453,13 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
         publisher.close()
 
+    def test_datalink_parses_packet_size_from_server_identification(self) -> None:
+        self.assertEqual(
+            512,
+            DataLinkPublisher._parse_packet_size("ID DataLink 1.0 :: DLPROTO:1.0 PACKETSIZE:512 WRITE"),
+        )
+        self.assertIsNone(DataLinkPublisher._parse_packet_size("ID DataLink 1.0 :: WRITE"))
+
     def test_datalink_payload_uses_float32_miniseed_encoding(self) -> None:
         publisher = DataLinkPublisher(
             DataLinkSettings(),
@@ -471,6 +478,28 @@ class ProtocolTests(unittest.TestCase):
         stream = read(io.BytesIO(payload), format="MSEED")
         self.assertEqual(np.dtype("float32"), stream[0].data.dtype)
         self.assertEqual("FLOAT32", stream[0].stats.mseed.encoding)
+        publisher.close()
+
+    def test_datalink_serialization_splits_packets_to_match_smaller_limit(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(100, dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_000_000_000,
+            max_payload_bytes=256,
+        )
+
+        self.assertEqual(2, len(packets))
+        self.assertTrue(all(len(payload) <= 256 for payload, *_ in packets))
+        self.assertAlmostEqual(1_699_999_999.0, packets[0][2], places=6)
+        self.assertAlmostEqual(1_699_999_999.5, packets[0][3], places=6)
+        self.assertAlmostEqual(1_699_999_999.5, packets[1][2], places=6)
+        self.assertAlmostEqual(1_700_000_000.0, packets[1][3], places=6)
         publisher.close()
 
     def test_datalink_send_data2_uses_distinct_stream_suffix_without_group_placeholder(self) -> None:
@@ -602,6 +631,47 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertIn("ERROR 0 23", str(excinfo.exception))
         self.assertIn("write permission denied", str(excinfo.exception))
+        publisher.close()
+
+    def test_datalink_background_sender_drops_permanent_errors_without_retrying(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(enabled=True, reconnect_interval_seconds=1.0),
+            StorageSettings(),
+        )
+        sent = threading.Event()
+        calls: list[str] = []
+
+        def _write(item: PendingDataLinkPacket) -> None:
+            calls.append(item.stream_id)
+            if item.stream_id.endswith("HSH/MSEED"):
+                raise DataLinkSendError("write permission denied", retryable=False)
+            sent.set()
+
+        publisher._write_packet_locked = _write  # type: ignore[method-assign]
+        publisher._enqueue_packet(
+            PendingDataLinkPacket(
+                stream_id="SC_S0001_10_HSH/MSEED",
+                payload=b"x" * 256,
+                start_time=1_700_000_000.0,
+                end_time=1_700_000_000.5,
+                ack_required=True,
+            )
+        )
+        publisher._enqueue_packet(
+            PendingDataLinkPacket(
+                stream_id="SC_S0001_10_HSZ/MSEED",
+                payload=b"y" * 256,
+                start_time=1_700_000_000.5,
+                end_time=1_700_000_001.0,
+                ack_required=True,
+            )
+        )
+
+        self.assertTrue(sent.wait(0.2))
+        self.assertEqual(
+            ["SC_S0001_10_HSH/MSEED", "SC_S0001_10_HSZ/MSEED"],
+            calls[:2],
+        )
         publisher.close()
 
     def test_datalink_background_sender_retries_failed_packet_in_memory(self) -> None:
