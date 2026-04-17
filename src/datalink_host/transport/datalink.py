@@ -246,9 +246,12 @@ class DataLinkPublisher:
         try:
             sock.sendall(packet)
             if item.ack_required:
-                response_header, _ = self._read_packet(sock)
+                response_header, response_payload = self._read_packet(sock)
                 if not response_header.startswith("OK "):
-                    raise RuntimeError(f"Unexpected DataLink response: {response_header}")
+                    raise RuntimeError(
+                        f"Unexpected DataLink response: "
+                        f"{self._format_status_response(response_header, response_payload)}"
+                    )
             self._stats.packets_sent += 1
             self._stats.bytes_sent += len(item.payload)
             self._stats.last_send_at = time.time()
@@ -420,3 +423,10 @@ class DataLinkPublisher:
         if parts[0] in {"INFO", "PACKET"} and parts:
             return int(parts[-1])
         return 0
+
+    @staticmethod
+    def _format_status_response(header: str, payload: bytes) -> str:
+        if not payload:
+            return header
+        message = payload.decode("utf-8", errors="replace").strip()
+        return f"{header} | {message}" if message else header

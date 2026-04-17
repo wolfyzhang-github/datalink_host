@@ -570,6 +570,40 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("timed out", publisher.stats().last_error or "")
         publisher.close()
 
+    def test_datalink_write_error_includes_server_payload(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+
+        class _FakeSocket:
+            def sendall(self, _data: bytes) -> None:
+                return
+
+            def close(self) -> None:
+                return
+
+        publisher._ensure_connected_locked = lambda: _FakeSocket()  # type: ignore[method-assign]
+        publisher._read_packet = lambda _sock: (  # type: ignore[method-assign]
+            "ERROR 0 23",
+            b"write permission denied",
+        )
+
+        with self.assertRaises(RuntimeError) as excinfo:
+            publisher._write_packet_locked(  # type: ignore[attr-defined]
+                PendingDataLinkPacket(
+                    stream_id="SC_S0001_10_HSH/MSEED",
+                    payload=b"x" * 512,
+                    start_time=1_700_000_000.0,
+                    end_time=1_700_000_001.0,
+                    ack_required=True,
+                )
+            )
+
+        self.assertIn("ERROR 0 23", str(excinfo.exception))
+        self.assertIn("write permission denied", str(excinfo.exception))
+        publisher.close()
+
     def test_datalink_background_sender_retries_failed_packet_in_memory(self) -> None:
         publisher = DataLinkPublisher(
             DataLinkSettings(enabled=True, reconnect_interval_seconds=0.01),
