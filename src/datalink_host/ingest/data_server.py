@@ -128,7 +128,11 @@ class TcpDataServer:
         if manage_socket:
             self._set_connection_socket(conn)
         self._on_connection_state(True)
-        decoder = PacketDecoder(self._protocol_settings)
+        decoder = PacketDecoder(
+            self._protocol_settings,
+            max_payload_bytes=self._settings.max_packet_payload_bytes,
+            max_pending_bytes=self._settings.max_pending_buffer_bytes,
+        )
         connected_at = time.monotonic()
         bytes_received = 0
         packets_decoded = 0

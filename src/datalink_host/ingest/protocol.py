@@ -49,6 +49,8 @@ def _other_byte_order(byte_order: str) -> str:
 @dataclass(slots=True)
 class PacketDecoder:
     settings: ProtocolSettings
+    max_payload_bytes: int | None = None
+    max_pending_bytes: int | None = None
     _buffer: bytearray = field(default_factory=bytearray)
 
     def pending_bytes(self) -> int:
@@ -68,6 +70,12 @@ class PacketDecoder:
         return bytes(self._buffer[:limit]).hex(" ")
 
     def feed(self, chunk: bytes) -> list[TcpPacket]:
+        if self.max_pending_bytes is not None and len(self._buffer) + len(chunk) > self.max_pending_bytes:
+            self._buffer.clear()
+            raise ValueError(
+                f"Decoder pending buffer exceeded safety limit: "
+                f"{len(chunk)} incoming bytes would grow buffer beyond {self.max_pending_bytes} bytes"
+            )
         self._buffer.extend(chunk)
         packets: list[TcpPacket] = []
         header_struct = _header_struct(self.settings)
@@ -102,7 +110,17 @@ class PacketDecoder:
                 _normalize_length_value(payload_length, self.settings),
                 self.settings,
             )
+            if self.max_payload_bytes is not None and payload_bytes > self.max_payload_bytes:
+                self._buffer.clear()
+                raise ValueError(
+                    f"Decoded payload size {payload_bytes} exceeds safety limit {self.max_payload_bytes}"
+                )
             packet_size = header_struct.size + payload_bytes
+            if self.max_pending_bytes is not None and packet_size > self.max_pending_bytes:
+                self._buffer.clear()
+                raise ValueError(
+                    f"Decoded packet size {packet_size} exceeds pending buffer safety limit {self.max_pending_bytes}"
+                )
             if len(self._buffer) < packet_size:
                 break
             raw_bytes = bytes(self._buffer[:packet_size])

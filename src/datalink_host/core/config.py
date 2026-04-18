@@ -26,6 +26,8 @@ class DataServerSettings:
     recv_size: int = 65536
     reconnect_interval_seconds: float = 3.0
     connect_timeout_seconds: float = 5.0
+    max_packet_payload_bytes: int = 8 * 1024 * 1024
+    max_pending_buffer_bytes: int = 16 * 1024 * 1024
 
 
 @dataclass(slots=True)

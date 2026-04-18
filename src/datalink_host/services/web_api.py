@@ -4,9 +4,11 @@ import threading
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 import uvicorn
 
+from datalink_host.core.logging import get_recent_logs
 from datalink_host.core.config import WebSettings
 from datalink_host.services.runtime import RuntimeService
 from datalink_host.services.web_ui import INDEX_HTML
@@ -20,17 +22,24 @@ def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
         "control_connected": snapshot.control_connected,
         "packets_received": snapshot.packets_received,
         "bytes_received": snapshot.bytes_received,
+        "frames_dropped": snapshot.frames_dropped,
         "queue_depth": snapshot.queue_depth,
         "source_sample_rate": snapshot.source_sample_rate,
         "data1_rate": snapshot.data1_rate,
         "data2_rate": snapshot.data2_rate,
         "storage_enabled": snapshot.storage_enabled,
+        "storage_queue_depth": snapshot.storage_queue_depth,
+        "storage_frames_dropped": snapshot.storage_frames_dropped,
+        "storage_last_error": snapshot.storage_last_error,
         "datalink_enabled": snapshot.datalink_enabled,
         "datalink_connected": snapshot.datalink_connected,
         "datalink_packets_sent": snapshot.datalink_packets_sent,
         "datalink_bytes_sent": snapshot.datalink_bytes_sent,
         "datalink_reconnects": snapshot.datalink_reconnects,
         "datalink_last_error": snapshot.datalink_last_error,
+        "datalink_publish_queue_depth": snapshot.datalink_publish_queue_depth,
+        "datalink_publish_frames_dropped": snapshot.datalink_publish_frames_dropped,
+        "datalink_publish_last_error": snapshot.datalink_publish_last_error,
         "capture_enabled": snapshot.capture_enabled,
         "gps_enabled": snapshot.gps_enabled,
         "gps_connected": snapshot.gps_connected,
@@ -47,6 +56,13 @@ def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
 
 def create_app(runtime: RuntimeService) -> FastAPI:
     app = FastAPI(title="datalink-host web control")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -92,6 +108,19 @@ def create_app(runtime: RuntimeService) -> FastAPI:
     @app.get("/api/gps/ports")
     async def gps_ports() -> dict[str, Any]:
         return {"status": "ok", "payload": runtime.gps_ports()}
+
+    @app.get("/api/logs")
+    async def logs(
+        limit: int = Query(default=200, ge=1, le=1000),
+        level: str = Query(default="all"),
+    ) -> dict[str, Any]:
+        normalized_level = level.strip().upper()
+        lines = get_recent_logs(limit=max(limit * 3, 200))
+        if normalized_level in {"INFO", "WARNING", "ERROR"}:
+            lines = [line for line in lines if f" {normalized_level} " in line]
+        elif normalized_level not in {"ALL", ""}:
+            raise HTTPException(status_code=400, detail="Unsupported log level")
+        return {"status": "ok", "payload": {"lines": lines[-limit:]}}
 
     @app.post("/api/gps/start")
     async def gps_start() -> dict[str, Any]:

@@ -26,13 +26,27 @@ class _ControlServer(socketserver.ThreadingTCPServer):
         super().__init__(server_address, handler)
         self.on_connection_state = on_connection_state
         self.on_message = on_message
+        self._connection_lock = threading.Lock()
+        self._connection_count = 0
+
+    def mark_connection_opened(self) -> None:
+        with self._connection_lock:
+            self._connection_count += 1
+            connected = self._connection_count > 0
+        self.on_connection_state(connected)
+
+    def mark_connection_closed(self) -> None:
+        with self._connection_lock:
+            self._connection_count = max(self._connection_count - 1, 0)
+            connected = self._connection_count > 0
+        self.on_connection_state(connected)
 
 
 class _ControlHandler(socketserver.StreamRequestHandler):
     def handle(self) -> None:
         server = self.server
         assert isinstance(server, _ControlServer)
-        server.on_connection_state(True)
+        server.mark_connection_opened()
         LOGGER.info("Control connection accepted from %s", self.client_address)
         try:
             while True:
@@ -46,7 +60,7 @@ class _ControlHandler(socketserver.StreamRequestHandler):
                     response = {"status": "error", "message": str(exc)}
                 self.wfile.write(json.dumps(response).encode("utf-8") + b"\n")
         finally:
-            server.on_connection_state(False)
+            server.mark_connection_closed()
             LOGGER.info("Control connection closed from %s", self.client_address)
 
 
@@ -85,4 +99,3 @@ class TcpControlServer:
             self._thread.join(timeout=2.0)
         self._server = None
         self._thread = None
-

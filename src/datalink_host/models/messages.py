@@ -53,6 +53,7 @@ class RuntimeSnapshot:
     control_connected: bool
     packets_received: int
     bytes_received: int
+    frames_dropped: int
     last_error: str | None
     source_sample_rate: float | None
     data1_rate: float
@@ -64,7 +65,13 @@ class RuntimeSnapshot:
     datalink_bytes_sent: int
     datalink_reconnects: int
     datalink_last_error: str | None
+    datalink_publish_queue_depth: int
+    datalink_publish_frames_dropped: int
+    datalink_publish_last_error: str | None
     storage_enabled: bool
+    storage_queue_depth: int
+    storage_frames_dropped: int
+    storage_last_error: str | None
     capture_enabled: bool
     gps_enabled: bool
     gps_connected: bool

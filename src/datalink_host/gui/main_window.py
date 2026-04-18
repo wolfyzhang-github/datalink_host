@@ -14,9 +14,20 @@ from datalink_host.services.runtime import RuntimeService, slice_for_plot
 
 
 def recommended_window_size(available_width: int, available_height: int) -> tuple[int, int]:
-    width = min(1400, max(960, int(available_width * 0.92)))
-    height = min(900, max(680, int(available_height * 0.92)))
+    width = min(1440, max(1080, int(available_width * 0.92)))
+    height = min(920, max(760, int(available_height * 0.92)))
     return min(width, available_width), min(height, available_height)
+
+
+def _status_value_label(parent: QtWidgets.QWidget) -> QtWidgets.QLabel:
+    label = QtWidgets.QLabel("-", parent)
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setSizePolicy(
+        QtWidgets.QSizePolicy.Policy.Expanding,
+        QtWidgets.QSizePolicy.Policy.Preferred,
+    )
+    return label
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -25,20 +36,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._runtime = runtime
         self._settings = settings
         self._data_mode = "unwrapped"
-        self.setWindowTitle("长基线光纤应变信号监控软件")
         self._status_labels: dict[str, QtWidgets.QLabel] = {}
         self._plots: list[pg.PlotDataItem] = []
+
         self._processing_state_label: QtWidgets.QLabel | None = None
+        self._ingest_help_label: QtWidgets.QLabel | None = None
+        self._config_feedback_label: QtWidgets.QLabel | None = None
         self._start_processing_button: QtWidgets.QPushButton | None = None
         self._pause_processing_button: QtWidgets.QPushButton | None = None
-        self._ingest_help_label: QtWidgets.QLabel | None = None
+        self._apply_button: QtWidgets.QPushButton | None = None
+        self._reload_button: QtWidgets.QPushButton | None = None
+
         self._data1_rate_spin: QtWidgets.QDoubleSpinBox | None = None
         self._data2_rate_spin: QtWidgets.QDoubleSpinBox | None = None
-        self._data_mode_combo: QtWidgets.QComboBox | None = None
+        self._data_server_mode_combo: QtWidgets.QComboBox | None = None
         self._data_host_edit: QtWidgets.QLineEdit | None = None
         self._data_port_spin: QtWidgets.QSpinBox | None = None
         self._data_remote_host_edit: QtWidgets.QLineEdit | None = None
         self._data_remote_port_spin: QtWidgets.QSpinBox | None = None
+        self._connection_mode_hint_label: QtWidgets.QLabel | None = None
+
         self._frame_header_edit: QtWidgets.QLineEdit | None = None
         self._frame_header_size_combo: QtWidgets.QComboBox | None = None
         self._length_field_size_combo: QtWidgets.QComboBox | None = None
@@ -46,32 +63,44 @@ class MainWindow(QtWidgets.QMainWindow):
         self._length_field_units_combo: QtWidgets.QComboBox | None = None
         self._byte_order_combo: QtWidgets.QComboBox | None = None
         self._channel_layout_combo: QtWidgets.QComboBox | None = None
+
         self._storage_enabled_checkbox: QtWidgets.QCheckBox | None = None
-        self._datalink_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._storage_root_edit: QtWidgets.QLineEdit | None = None
+        self._storage_browse_button: QtWidgets.QPushButton | None = None
         self._storage_duration_spin: QtWidgets.QSpinBox | None = None
         self._storage_network_edit: QtWidgets.QLineEdit | None = None
         self._storage_station_edit: QtWidgets.QLineEdit | None = None
         self._storage_location_edit: QtWidgets.QLineEdit | None = None
+
+        self._datalink_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._datalink_host_edit: QtWidgets.QLineEdit | None = None
         self._datalink_port_spin: QtWidgets.QSpinBox | None = None
         self._datalink_ack_checkbox: QtWidgets.QCheckBox | None = None
         self._datalink_send_data2_checkbox: QtWidgets.QCheckBox | None = None
+
         self._capture_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._capture_path_edit: QtWidgets.QLineEdit | None = None
+        self._capture_browse_button: QtWidgets.QPushButton | None = None
+
         self._gps_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._gps_port_combo: QtWidgets.QComboBox | None = None
+        self._gps_refresh_button: QtWidgets.QPushButton | None = None
         self._gps_baudrate_spin: QtWidgets.QSpinBox | None = None
         self._gps_mode_combo: QtWidgets.QComboBox | None = None
         self._gps_poll_spin: QtWidgets.QDoubleSpinBox | None = None
+
         self._analysis_channel_spin: QtWidgets.QSpinBox | None = None
         self._analysis_window_spin: QtWidgets.QSpinBox | None = None
         self._analysis_time_curve: pg.PlotDataItem | None = None
         self._analysis_psd_curve: pg.PlotDataItem | None = None
         self._log_view: QtWidgets.QPlainTextEdit | None = None
         self._log_level_combo: QtWidgets.QComboBox | None = None
+
+        self.setWindowTitle("长基线光纤应变信号监控软件")
+        self.statusBar().showMessage("就绪")
         self._build_ui()
         self._configure_window_geometry()
+        self._load_runtime_config_into_form()
         self._refresh_gps_ports()
 
         self._timer = QtCore.QTimer(self)
@@ -79,102 +108,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self._timer.start(settings.gui.refresh_interval_ms)
 
     def _build_ui(self) -> None:
-        central = QtWidgets.QWidget(self)
-        root = QtWidgets.QVBoxLayout(central)
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, central)
-        splitter.setChildrenCollapsible(False)
-
-        overview_scroll = QtWidgets.QScrollArea(splitter)
-        overview_scroll.setWidgetResizable(True)
-        overview_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-
-        overview = QtWidgets.QWidget(overview_scroll)
-        overview_layout = QtWidgets.QVBoxLayout(overview)
-        overview_layout.setContentsMargins(0, 0, 0, 0)
-        overview_layout.addWidget(self._build_status_panel())
-        overview_layout.addLayout(self._build_controls())
-        overview_layout.addWidget(self._build_config_panel())
-        overview_layout.addStretch(1)
-        overview_scroll.setWidget(overview)
-
-        splitter.addWidget(overview_scroll)
-        splitter.addWidget(self._build_tabs())
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([360, 540])
-
-        root.addWidget(splitter)
-        self.setCentralWidget(central)
-
-    def _build_tabs(self) -> QtWidgets.QWidget:
         tabs = QtWidgets.QTabWidget(self)
-        tabs.addTab(self._build_plot_grid(), "总览")
+        tabs.addTab(self._build_overview_tab(), "总览")
+        tabs.addTab(self._build_config_tab(), "配置")
         tabs.addTab(self._build_analysis_tab(), "分析")
         tabs.addTab(self._build_logs_tab(), "日志")
-        return tabs
+        self.setCentralWidget(tabs)
 
-    def _configure_window_geometry(self) -> None:
-        screen = QtWidgets.QApplication.primaryScreen()
-        if screen is None:
-            self.resize(1280, 820)
-            return
-        available = screen.availableGeometry()
-        width, height = recommended_window_size(available.width(), available.height())
-        self.resize(width, height)
-        frame = self.frameGeometry()
-        frame.moveCenter(available.center())
-        self.move(frame.topLeft())
-
-    def _build_status_panel(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QGroupBox("运行状态", self)
-        layout = QtWidgets.QGridLayout(widget)
-        status_columns = 3
-        fields = [
-            ("data_connected", "数据连接"),
-            ("control_connected", "控制连接"),
-            ("source_sample_rate", "源采样率"),
-            ("packets_received", "已收包数"),
-            ("bytes_received", "已收字节"),
-            ("queue_depth", "队列深度"),
-            ("data1_rate", "降采样1 采样率"),
-            ("data2_rate", "降采样2 采样率"),
-            ("storage_enabled", "本地存储"),
-            ("datalink_enabled", "远传开关"),
-            ("datalink_connected", "远传连接"),
-            ("datalink_packets_sent", "已发包数"),
-            ("datalink_bytes_sent", "已发字节"),
-            ("datalink_reconnects", "重连次数"),
-            ("datalink_last_error", "远传错误"),
-            ("capture_enabled", "抓包开关"),
-            ("gps_enabled", "GPS 开关"),
-            ("gps_connected", "GPS 连接"),
-            ("gps_mode", "GPS 模式"),
-            ("gps_port", "GPS 串口"),
-            ("gps_last_timestamp", "GPS 时间"),
-            ("gps_fallback_active", "GPS 回退"),
-            ("gps_last_error", "GPS 错误"),
-            ("last_error", "最近错误"),
-        ]
-        for index, (name, label_text) in enumerate(fields):
-            label = QtWidgets.QLabel("-")
-            label.setWordWrap(True)
-            label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-            label.setSizePolicy(
-                QtWidgets.QSizePolicy.Policy.Expanding,
-                QtWidgets.QSizePolicy.Policy.Preferred,
-            )
-            self._status_labels[name] = label
-            row = index // status_columns
-            column = index % status_columns
-            layout.addWidget(QtWidgets.QLabel(label_text), row, column * 2)
-            layout.addWidget(label, row, column * 2 + 1)
-        for column in range(status_columns):
-            layout.setColumnStretch(column * 2 + 1, 1)
+    def _build_overview_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget(self)
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.addWidget(self._build_action_panel())
+        layout.addWidget(self._build_status_panel())
+        layout.addWidget(self._build_wave_panel(), stretch=1)
         return widget
 
-    def _build_controls(self) -> QtWidgets.QLayout:
-        layout = QtWidgets.QVBoxLayout()
+    def _build_action_panel(self) -> QtWidgets.QWidget:
+        panel = QtWidgets.QGroupBox("运行操作", self)
+        layout = QtWidgets.QVBoxLayout(panel)
+
         mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(QtWidgets.QLabel("当前查看:", panel))
         button_group = QtWidgets.QButtonGroup(self)
         for name, text in (
             ("raw", "原始"),
@@ -182,245 +136,366 @@ class MainWindow(QtWidgets.QMainWindow):
             ("data1", "降采样1"),
             ("data2", "降采样2"),
         ):
-            button = QtWidgets.QRadioButton(text)
+            button = QtWidgets.QRadioButton(text, panel)
             if name == self._data_mode:
                 button.setChecked(True)
             button.toggled.connect(partial(self._set_mode, name))
             button_group.addButton(button)
             mode_row.addWidget(button)
         mode_row.addStretch(1)
-        self._processing_state_label = QtWidgets.QLabel(self)
-        self._start_processing_button = QtWidgets.QPushButton("启动数据接收", self)
-        self._pause_processing_button = QtWidgets.QPushButton("停止数据接收", self)
+
+        action_row = QtWidgets.QHBoxLayout()
+        self._processing_state_label = QtWidgets.QLabel(panel)
+        self._start_processing_button = QtWidgets.QPushButton("启动数据接收", panel)
+        self._pause_processing_button = QtWidgets.QPushButton("停止数据接收", panel)
+        self._reload_button = QtWidgets.QPushButton("重载配置到界面", panel)
         self._start_processing_button.clicked.connect(self._start_processing)
         self._pause_processing_button.clicked.connect(self._pause_processing)
-        self._start_processing_button.setMinimumHeight(32)
-        self._pause_processing_button.setMinimumHeight(32)
-        self._start_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
-        self._pause_processing_button.setStyleSheet("font-weight: 600; padding: 4px 14px;")
-        self._start_processing_button.setToolTip("启动 TCP 数据接收；若配置已修改，将按当前配置重新开始接收。")
-        self._pause_processing_button.setToolTip("停止 TCP 数据接收，但不会关闭界面，也不会清空已显示的数据。")
-        action_row = QtWidgets.QHBoxLayout()
+        self._reload_button.clicked.connect(self._load_runtime_config_into_form)
         action_row.addWidget(self._processing_state_label)
+        action_row.addStretch(1)
+        action_row.addWidget(self._reload_button)
         action_row.addWidget(self._start_processing_button)
         action_row.addWidget(self._pause_processing_button)
-        action_row.addStretch(1)
-        self._ingest_help_label = QtWidgets.QLabel(
-            "上方按钮只控制数据接收是否运行。下方“保存配置”只修改配置：运行中保存会自动重连，停止时保存不会自动启动。",
-            self,
-        )
+
+        self._ingest_help_label = QtWidgets.QLabel(panel)
         self._ingest_help_label.setWordWrap(True)
-        self._ingest_help_label.setStyleSheet("color: #555;")
+
         layout.addLayout(mode_row)
         layout.addLayout(action_row)
         layout.addWidget(self._ingest_help_label)
         self._update_processing_controls()
-        return layout
+        return panel
 
-    def _build_config_panel(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QGroupBox("采集与协议配置", self)
-        layout = QtWidgets.QGridLayout(widget)
-
-        self._data1_rate_spin = QtWidgets.QDoubleSpinBox(widget)
-        self._data1_rate_spin.setRange(0.1, 10000.0)
-        self._data1_rate_spin.setDecimals(2)
-        self._data1_rate_spin.setValue(self._settings.processing.data1_rate)
-
-        self._data2_rate_spin = QtWidgets.QDoubleSpinBox(widget)
-        self._data2_rate_spin.setRange(0.1, 10000.0)
-        self._data2_rate_spin.setDecimals(2)
-        self._data2_rate_spin.setValue(self._settings.processing.data2_rate)
-
-        self._data_mode_combo = QtWidgets.QComboBox(widget)
-        self._data_mode_combo.addItem("主动连接设备", "client")
-        self._data_mode_combo.addItem("监听设备连接", "server")
-        self._data_mode_combo.setCurrentIndex(0 if self._settings.data_server.mode == "client" else 1)
-
-        self._data_host_edit = QtWidgets.QLineEdit(self._settings.data_server.host, widget)
-
-        self._data_port_spin = QtWidgets.QSpinBox(widget)
-        self._data_port_spin.setRange(1, 65535)
-        self._data_port_spin.setValue(self._settings.data_server.port)
-
-        self._data_remote_host_edit = QtWidgets.QLineEdit(self._settings.data_server.remote_host, widget)
-
-        self._data_remote_port_spin = QtWidgets.QSpinBox(widget)
-        self._data_remote_port_spin.setRange(1, 65535)
-        self._data_remote_port_spin.setValue(self._settings.data_server.remote_port)
-
-        self._frame_header_edit = QtWidgets.QLineEdit(str(self._settings.protocol.frame_header), widget)
-
-        self._frame_header_size_combo = QtWidgets.QComboBox(widget)
-        self._frame_header_size_combo.addItems(["2", "4", "8"])
-        self._frame_header_size_combo.setCurrentText(str(self._settings.protocol.frame_header_size))
-
-        self._length_field_size_combo = QtWidgets.QComboBox(widget)
-        self._length_field_size_combo.addItems(["4", "8"])
-        self._length_field_size_combo.setCurrentText(str(self._settings.protocol.length_field_size))
-
-        self._length_field_format_combo = QtWidgets.QComboBox(widget)
-        self._length_field_format_combo.addItem("无符号整数", "uint")
-        self._length_field_format_combo.addItem("浮点 float64", "float64")
-        self._length_field_format_combo.setCurrentIndex(
-            0 if self._settings.protocol.length_field_format == "uint" else 1
+    def _build_status_panel(self) -> QtWidgets.QWidget:
+        panel = QtWidgets.QWidget(self)
+        layout = QtWidgets.QGridLayout(panel)
+        layout.addWidget(
+            self._build_status_group(
+                "连接与处理",
+                [
+                    ("data_connected", "数据连接"),
+                    ("control_connected", "控制连接"),
+                    ("source_sample_rate", "源采样率"),
+                    ("packets_received", "已收包数"),
+                    ("bytes_received", "已收字节"),
+                    ("queue_depth", "处理队列"),
+                    ("frames_dropped", "处理丢帧"),
+                ],
+            ),
+            0,
+            0,
         )
-
-        self._length_field_units_combo = QtWidgets.QComboBox(widget)
-        self._length_field_units_combo.addItem("字节", "bytes")
-        self._length_field_units_combo.addItem("数值个数", "values")
-        self._length_field_units_combo.setCurrentIndex(
-            0 if self._settings.protocol.length_field_units == "bytes" else 1
+        layout.addWidget(
+            self._build_status_group(
+                "输出链路",
+                [
+                    ("storage_enabled", "本地存储"),
+                    ("data1_rate", "降采样1"),
+                    ("data2_rate", "降采样2"),
+                    ("storage_queue_depth", "存储队列"),
+                    ("storage_frames_dropped", "存储丢帧"),
+                    ("datalink_enabled", "远传开关"),
+                    ("datalink_connected", "远传连接"),
+                    ("datalink_packets_sent", "远传已发包"),
+                    ("datalink_bytes_sent", "远传已发字节"),
+                    ("datalink_reconnects", "远传重连"),
+                    ("datalink_publish_queue_depth", "远传发布队列"),
+                    ("datalink_publish_frames_dropped", "远传发布丢帧"),
+                ],
+            ),
+            0,
+            1,
         )
-
-        self._byte_order_combo = QtWidgets.QComboBox(widget)
-        self._byte_order_combo.addItem("小端", "little")
-        self._byte_order_combo.addItem("大端", "big")
-        self._byte_order_combo.setCurrentIndex(0 if self._settings.protocol.byte_order == "little" else 1)
-
-        self._channel_layout_combo = QtWidgets.QComboBox(widget)
-        self._channel_layout_combo.addItem("采样交织", "interleaved")
-        self._channel_layout_combo.addItem("按通道连续", "channel-major")
-        self._channel_layout_combo.setCurrentIndex(
-            0 if self._settings.protocol.channel_layout == "interleaved" else 1
+        layout.addWidget(
+            self._build_status_group(
+                "时间与异常",
+                [
+                    ("capture_enabled", "抓包"),
+                    ("gps_enabled", "GPS"),
+                    ("gps_connected", "GPS连接"),
+                    ("gps_mode", "GPS模式"),
+                    ("gps_port", "GPS串口"),
+                    ("gps_last_timestamp", "GPS时间"),
+                    ("gps_last_error", "GPS错误"),
+                    ("gps_fallback_active", "GPS回退"),
+                    ("last_error", "最近错误"),
+                    ("storage_last_error", "存储错误"),
+                    ("datalink_last_error", "远传错误"),
+                    ("datalink_publish_last_error", "远传发布错误"),
+                ],
+            ),
+            0,
+            2,
         )
-
-        self._storage_enabled_checkbox = QtWidgets.QCheckBox("启用本地存储", widget)
-        self._storage_enabled_checkbox.setChecked(self._settings.storage.enabled)
-
-        self._datalink_enabled_checkbox = QtWidgets.QCheckBox("启用 DataLink 远传", widget)
-        self._datalink_enabled_checkbox.setChecked(self._settings.datalink.enabled)
-
-        self._storage_root_edit = QtWidgets.QLineEdit(str(self._settings.storage.root), widget)
-        self._storage_duration_spin = QtWidgets.QSpinBox(widget)
-        self._storage_duration_spin.setRange(1, 86400)
-        self._storage_duration_spin.setValue(self._settings.storage.file_duration_seconds)
-
-        self._storage_network_edit = QtWidgets.QLineEdit(self._settings.storage.network, widget)
-        self._storage_station_edit = QtWidgets.QLineEdit(self._settings.storage.station, widget)
-        self._storage_location_edit = QtWidgets.QLineEdit(self._settings.storage.location, widget)
-        self._datalink_host_edit = QtWidgets.QLineEdit(self._settings.datalink.host, widget)
-        self._datalink_port_spin = QtWidgets.QSpinBox(widget)
-        self._datalink_port_spin.setRange(1, 65535)
-        self._datalink_port_spin.setValue(self._settings.datalink.port)
-        self._datalink_ack_checkbox = QtWidgets.QCheckBox("需要 ACK", widget)
-        self._datalink_ack_checkbox.setChecked(self._settings.datalink.ack_required)
-        self._datalink_send_data2_checkbox = QtWidgets.QCheckBox("发送降采样2", widget)
-        self._datalink_send_data2_checkbox.setChecked(self._settings.datalink.send_data2)
-        self._capture_enabled_checkbox = QtWidgets.QCheckBox("启用抓包", widget)
-        self._capture_enabled_checkbox.setChecked(self._settings.capture.enabled)
-        self._capture_path_edit = QtWidgets.QLineEdit(str(self._settings.capture.path), widget)
-        self._gps_enabled_checkbox = QtWidgets.QCheckBox("启用 GPS 时间", widget)
-        self._gps_enabled_checkbox.setChecked(self._settings.gps.enabled)
-        self._gps_port_combo = QtWidgets.QComboBox(widget)
-        self._gps_port_combo.setEditable(True)
-        self._gps_port_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        self._gps_baudrate_spin = QtWidgets.QSpinBox(widget)
-        self._gps_baudrate_spin.setRange(1, 921600)
-        self._gps_baudrate_spin.setValue(self._settings.gps.baudrate)
-        self._gps_mode_combo = QtWidgets.QComboBox(widget)
-        self._gps_mode_combo.addItem("调试模式", "debug")
-        self._gps_mode_combo.addItem("部署模式", "deploy")
-        self._gps_mode_combo.setCurrentIndex(0 if self._settings.gps.mode == "debug" else 1)
-        self._gps_poll_spin = QtWidgets.QDoubleSpinBox(widget)
-        self._gps_poll_spin.setRange(0.01, 10.0)
-        self._gps_poll_spin.setDecimals(2)
-        self._gps_poll_spin.setValue(self._settings.gps.poll_interval_seconds)
-
-        apply_button = QtWidgets.QPushButton("保存配置", widget)
-        apply_button.clicked.connect(self._apply_runtime_config)
-        apply_button.setToolTip("保存当前配置。若数据接收正在运行，会按新配置自动重连；若已停止，仅保存配置。")
-        apply_hint_label = QtWidgets.QLabel(
-            "保存规则：运行中保存会自动重建数据连接；已停止时仅保存参数，点击“启动数据接收”后才会生效。",
-            widget,
-        )
-        apply_hint_label.setWordWrap(True)
-        apply_hint_label.setStyleSheet("color: #555;")
-
-        browse_button = QtWidgets.QPushButton("浏览...", widget)
-        browse_button.clicked.connect(self._choose_storage_root)
-        capture_browse_button = QtWidgets.QPushButton("抓包文件...", widget)
-        capture_browse_button.clicked.connect(self._choose_capture_path)
-        gps_refresh_button = QtWidgets.QPushButton("刷新串口", widget)
-        gps_refresh_button.clicked.connect(self._refresh_gps_ports)
-
-        layout.addWidget(QtWidgets.QLabel("降采样1 采样率"), 0, 0)
-        layout.addWidget(self._data1_rate_spin, 0, 1)
-        layout.addWidget(QtWidgets.QLabel("降采样2 采样率"), 0, 2)
-        layout.addWidget(self._data2_rate_spin, 0, 3)
-        layout.addWidget(QtWidgets.QLabel("数据接入模式"), 1, 0)
-        layout.addWidget(self._data_mode_combo, 1, 1)
-        layout.addWidget(QtWidgets.QLabel("本地监听地址"), 1, 2)
-        layout.addWidget(self._data_host_edit, 1, 3)
-        layout.addWidget(QtWidgets.QLabel("本地监听端口"), 2, 0)
-        layout.addWidget(self._data_port_spin, 2, 1)
-        layout.addWidget(QtWidgets.QLabel("设备 IP"), 2, 2)
-        layout.addWidget(self._data_remote_host_edit, 2, 3)
-        layout.addWidget(QtWidgets.QLabel("设备端口"), 3, 0)
-        layout.addWidget(self._data_remote_port_spin, 3, 1)
-        layout.addWidget(QtWidgets.QLabel("帧头值"), 3, 2)
-        layout.addWidget(self._frame_header_edit, 3, 3)
-        layout.addWidget(QtWidgets.QLabel("帧头字节数"), 4, 0)
-        layout.addWidget(self._frame_header_size_combo, 4, 1)
-        layout.addWidget(QtWidgets.QLabel("长度字段字节数"), 4, 2)
-        layout.addWidget(self._length_field_size_combo, 4, 3)
-        layout.addWidget(QtWidgets.QLabel("长度字段类型"), 5, 0)
-        layout.addWidget(self._length_field_format_combo, 5, 1)
-        layout.addWidget(QtWidgets.QLabel("长度单位"), 5, 2)
-        layout.addWidget(self._length_field_units_combo, 5, 3)
-        layout.addWidget(QtWidgets.QLabel("字节序"), 6, 0)
-        layout.addWidget(self._byte_order_combo, 6, 1)
-        layout.addWidget(QtWidgets.QLabel("通道排列"), 6, 2)
-        layout.addWidget(self._channel_layout_combo, 6, 3)
-        layout.addWidget(self._storage_enabled_checkbox, 7, 2)
-        layout.addWidget(self._datalink_enabled_checkbox, 7, 3)
-        layout.addWidget(QtWidgets.QLabel("存储目录"), 8, 0)
-        layout.addWidget(self._storage_root_edit, 8, 1, 1, 3)
-        layout.addWidget(browse_button, 8, 4)
-        layout.addWidget(QtWidgets.QLabel("单文件时长(秒)"), 9, 0)
-        layout.addWidget(self._storage_duration_spin, 9, 1)
-        layout.addWidget(QtWidgets.QLabel("网络码"), 9, 2)
-        layout.addWidget(self._storage_network_edit, 9, 3)
-        layout.addWidget(QtWidgets.QLabel("台站码"), 10, 0)
-        layout.addWidget(self._storage_station_edit, 10, 1)
-        layout.addWidget(QtWidgets.QLabel("位置码"), 10, 2)
-        layout.addWidget(self._storage_location_edit, 10, 3)
-        layout.addWidget(QtWidgets.QLabel("DataLink 主机"), 11, 0)
-        layout.addWidget(self._datalink_host_edit, 11, 1)
-        layout.addWidget(QtWidgets.QLabel("DataLink 端口"), 11, 2)
-        layout.addWidget(self._datalink_port_spin, 11, 3)
-        layout.addWidget(self._datalink_ack_checkbox, 12, 0)
-        layout.addWidget(self._datalink_send_data2_checkbox, 12, 1)
-        layout.addWidget(self._capture_enabled_checkbox, 12, 2)
-        layout.addWidget(self._capture_path_edit, 12, 3)
-        layout.addWidget(capture_browse_button, 12, 4)
-        layout.addWidget(self._gps_enabled_checkbox, 13, 0)
-        layout.addWidget(QtWidgets.QLabel("GPS 串口"), 13, 1)
-        layout.addWidget(self._gps_port_combo, 13, 2)
-        layout.addWidget(gps_refresh_button, 13, 4)
-        layout.addWidget(QtWidgets.QLabel("GPS 波特率"), 14, 0)
-        layout.addWidget(self._gps_baudrate_spin, 14, 1)
-        layout.addWidget(QtWidgets.QLabel("GPS 模式"), 14, 2)
-        layout.addWidget(self._gps_mode_combo, 14, 3)
-        layout.addWidget(QtWidgets.QLabel("轮询间隔(秒)"), 15, 0)
-        layout.addWidget(self._gps_poll_spin, 15, 1)
-        layout.addWidget(apply_hint_label, 16, 0, 1, 4)
-        layout.addWidget(apply_button, 16, 4)
+        layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 1)
-        layout.setColumnStretch(3, 1)
-        return widget
+        layout.setColumnStretch(2, 1)
+        return panel
 
-    def _build_plot_grid(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget(self)
-        layout = QtWidgets.QGridLayout(widget)
-        colors = ["#6e44ff", "#00916e", "#e4572e", "#f3a712", "#4d9de0", "#c5283d", "#17bebb", "#2e4057"]
+    def _build_status_group(
+        self,
+        title: str,
+        fields: list[tuple[str, str]],
+    ) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox(title, self)
+        form = QtWidgets.QFormLayout(group)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        for key, label_text in fields:
+            label = _status_value_label(group)
+            self._status_labels[key] = label
+            form.addRow(label_text, label)
+        return group
+
+    def _build_wave_panel(self) -> QtWidgets.QWidget:
+        panel = QtWidgets.QGroupBox("通道总览", self)
+        layout = QtWidgets.QGridLayout(panel)
+        colors = [
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#17becf",
+            "#bcbd22",
+        ]
         for channel in range(self._settings.protocol.channels):
             plot_widget = pg.PlotWidget(title=f"CH {channel + 1}")
             plot_widget.showGrid(x=True, y=True, alpha=0.2)
             plot_widget.setBackground("w")
-            curve = plot_widget.plot(pen=pg.mkPen(colors[channel % len(colors)], width=1.5))
+            curve = plot_widget.plot(pen=pg.mkPen(colors[channel % len(colors)], width=1.6))
             self._plots.append(curve)
             layout.addWidget(plot_widget, channel // 2, channel % 2)
+        return panel
+
+    def _build_config_tab(self) -> QtWidgets.QWidget:
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        container = QtWidgets.QWidget(scroll)
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.addWidget(self._build_config_header())
+        layout.addWidget(self._build_processing_section())
+        layout.addWidget(self._build_ingest_section())
+        layout.addWidget(self._build_protocol_section())
+        layout.addWidget(self._build_storage_section())
+        layout.addWidget(self._build_datalink_section())
+        layout.addWidget(self._build_capture_section())
+        layout.addWidget(self._build_gps_section())
+        layout.addStretch(1)
+
+        scroll.setWidget(container)
+        return scroll
+
+    def _build_config_header(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QGroupBox("配置流程", self)
+        layout = QtWidgets.QVBoxLayout(widget)
+
+        summary = QtWidgets.QLabel(
+            "先在下面分组编辑参数，再点击“应用配置”。如果当前正在接收，应用后会按新配置自动重建连接；"
+            "如果当前已停止，则只更新参数，不会自动启动。",
+            widget,
+        )
+        summary.setWordWrap(True)
+
+        row = QtWidgets.QHBoxLayout()
+        self._config_feedback_label = QtWidgets.QLabel("表单已同步到当前运行时配置。", widget)
+        self._config_feedback_label.setWordWrap(True)
+        self._apply_button = QtWidgets.QPushButton("应用配置", widget)
+        self._apply_button.clicked.connect(self._apply_runtime_config)
+        row.addWidget(self._config_feedback_label, stretch=1)
+        row.addWidget(self._apply_button)
+
+        layout.addWidget(summary)
+        layout.addLayout(row)
         return widget
+
+    def _build_processing_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("处理参数", self)
+        form = QtWidgets.QFormLayout(group)
+
+        self._data1_rate_spin = QtWidgets.QDoubleSpinBox(group)
+        self._data1_rate_spin.setRange(0.1, 10000.0)
+        self._data1_rate_spin.setDecimals(2)
+
+        self._data2_rate_spin = QtWidgets.QDoubleSpinBox(group)
+        self._data2_rate_spin.setRange(0.1, 10000.0)
+        self._data2_rate_spin.setDecimals(2)
+
+        form.addRow("降采样1 采样率", self._data1_rate_spin)
+        form.addRow("降采样2 采样率", self._data2_rate_spin)
+        return group
+
+    def _build_ingest_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("数据接入", self)
+        layout = QtWidgets.QVBoxLayout(group)
+        form = QtWidgets.QFormLayout()
+
+        self._data_server_mode_combo = QtWidgets.QComboBox(group)
+        self._data_server_mode_combo.addItem("主动连接设备", "client")
+        self._data_server_mode_combo.addItem("监听设备连接", "server")
+        self._data_server_mode_combo.currentIndexChanged.connect(self._update_form_state)
+
+        self._data_host_edit = QtWidgets.QLineEdit(group)
+        self._data_port_spin = QtWidgets.QSpinBox(group)
+        self._data_port_spin.setRange(1, 65535)
+        self._data_remote_host_edit = QtWidgets.QLineEdit(group)
+        self._data_remote_port_spin = QtWidgets.QSpinBox(group)
+        self._data_remote_port_spin.setRange(1, 65535)
+
+        form.addRow("接入模式", self._data_server_mode_combo)
+        form.addRow("本地监听地址", self._data_host_edit)
+        form.addRow("本地监听端口", self._data_port_spin)
+        form.addRow("设备地址", self._data_remote_host_edit)
+        form.addRow("设备端口", self._data_remote_port_spin)
+
+        self._connection_mode_hint_label = QtWidgets.QLabel(group)
+        self._connection_mode_hint_label.setWordWrap(True)
+
+        layout.addLayout(form)
+        layout.addWidget(self._connection_mode_hint_label)
+        return group
+
+    def _build_protocol_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("协议解析", self)
+        form = QtWidgets.QFormLayout(group)
+
+        self._frame_header_edit = QtWidgets.QLineEdit(group)
+        self._frame_header_size_combo = QtWidgets.QComboBox(group)
+        self._frame_header_size_combo.addItems(["2", "4", "8"])
+        self._length_field_size_combo = QtWidgets.QComboBox(group)
+        self._length_field_size_combo.addItems(["4", "8"])
+        self._length_field_format_combo = QtWidgets.QComboBox(group)
+        self._length_field_format_combo.addItem("无符号整数", "uint")
+        self._length_field_format_combo.addItem("浮点 float64", "float64")
+        self._length_field_units_combo = QtWidgets.QComboBox(group)
+        self._length_field_units_combo.addItem("字节", "bytes")
+        self._length_field_units_combo.addItem("数值个数", "values")
+        self._byte_order_combo = QtWidgets.QComboBox(group)
+        self._byte_order_combo.addItem("大端", "big")
+        self._byte_order_combo.addItem("小端", "little")
+        self._channel_layout_combo = QtWidgets.QComboBox(group)
+        self._channel_layout_combo.addItem("采样交织", "interleaved")
+        self._channel_layout_combo.addItem("按通道连续", "channel-major")
+
+        form.addRow("帧头值", self._frame_header_edit)
+        form.addRow("帧头字节数", self._frame_header_size_combo)
+        form.addRow("长度字段字节数", self._length_field_size_combo)
+        form.addRow("长度字段格式", self._length_field_format_combo)
+        form.addRow("长度单位", self._length_field_units_combo)
+        form.addRow("字节序", self._byte_order_combo)
+        form.addRow("通道排列", self._channel_layout_combo)
+        return group
+
+    def _build_storage_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("本地存储", self)
+        layout = QtWidgets.QVBoxLayout(group)
+        form = QtWidgets.QFormLayout()
+
+        self._storage_enabled_checkbox = QtWidgets.QCheckBox("启用本地存储", group)
+        self._storage_enabled_checkbox.toggled.connect(self._update_form_state)
+        self._storage_root_edit = QtWidgets.QLineEdit(group)
+        self._storage_browse_button = QtWidgets.QPushButton("浏览...", group)
+        self._storage_browse_button.clicked.connect(self._choose_storage_root)
+        storage_root_row = QtWidgets.QHBoxLayout()
+        storage_root_row.addWidget(self._storage_root_edit, stretch=1)
+        storage_root_row.addWidget(self._storage_browse_button)
+        storage_root_widget = QtWidgets.QWidget(group)
+        storage_root_widget.setLayout(storage_root_row)
+
+        self._storage_duration_spin = QtWidgets.QSpinBox(group)
+        self._storage_duration_spin.setRange(1, 86400)
+        self._storage_network_edit = QtWidgets.QLineEdit(group)
+        self._storage_station_edit = QtWidgets.QLineEdit(group)
+        self._storage_location_edit = QtWidgets.QLineEdit(group)
+
+        layout.addWidget(self._storage_enabled_checkbox)
+        form.addRow("存储目录", storage_root_widget)
+        form.addRow("单文件时长(秒)", self._storage_duration_spin)
+        form.addRow("网络码", self._storage_network_edit)
+        form.addRow("台站码", self._storage_station_edit)
+        form.addRow("位置码", self._storage_location_edit)
+        layout.addLayout(form)
+        return group
+
+    def _build_datalink_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("DataLink 远传", self)
+        layout = QtWidgets.QVBoxLayout(group)
+        form = QtWidgets.QFormLayout()
+
+        self._datalink_enabled_checkbox = QtWidgets.QCheckBox("启用 DataLink 远传", group)
+        self._datalink_enabled_checkbox.toggled.connect(self._update_form_state)
+        self._datalink_host_edit = QtWidgets.QLineEdit(group)
+        self._datalink_port_spin = QtWidgets.QSpinBox(group)
+        self._datalink_port_spin.setRange(1, 65535)
+        self._datalink_ack_checkbox = QtWidgets.QCheckBox("发送后等待 ACK", group)
+        self._datalink_send_data2_checkbox = QtWidgets.QCheckBox("同时发送降采样2", group)
+
+        layout.addWidget(self._datalink_enabled_checkbox)
+        form.addRow("远传主机", self._datalink_host_edit)
+        form.addRow("远传端口", self._datalink_port_spin)
+        form.addRow("确认策略", self._datalink_ack_checkbox)
+        form.addRow("发送内容", self._datalink_send_data2_checkbox)
+        layout.addLayout(form)
+        return group
+
+    def _build_capture_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("抓包", self)
+        layout = QtWidgets.QVBoxLayout(group)
+        form = QtWidgets.QFormLayout()
+
+        self._capture_enabled_checkbox = QtWidgets.QCheckBox("启用原始 TCP 抓包", group)
+        self._capture_enabled_checkbox.toggled.connect(self._update_form_state)
+        self._capture_path_edit = QtWidgets.QLineEdit(group)
+        self._capture_browse_button = QtWidgets.QPushButton("抓包文件...", group)
+        self._capture_browse_button.clicked.connect(self._choose_capture_path)
+        capture_path_row = QtWidgets.QHBoxLayout()
+        capture_path_row.addWidget(self._capture_path_edit, stretch=1)
+        capture_path_row.addWidget(self._capture_browse_button)
+        capture_path_widget = QtWidgets.QWidget(group)
+        capture_path_widget.setLayout(capture_path_row)
+
+        layout.addWidget(self._capture_enabled_checkbox)
+        form.addRow("抓包文件", capture_path_widget)
+        layout.addLayout(form)
+        return group
+
+    def _build_gps_section(self) -> QtWidgets.QWidget:
+        group = QtWidgets.QGroupBox("GPS 时间", self)
+        layout = QtWidgets.QVBoxLayout(group)
+        form = QtWidgets.QFormLayout()
+
+        self._gps_enabled_checkbox = QtWidgets.QCheckBox("启用 GPS 时间", group)
+        self._gps_enabled_checkbox.toggled.connect(self._update_form_state)
+        self._gps_port_combo = QtWidgets.QComboBox(group)
+        self._gps_port_combo.setEditable(True)
+        self._gps_port_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self._gps_refresh_button = QtWidgets.QPushButton("刷新串口", group)
+        self._gps_refresh_button.clicked.connect(self._refresh_gps_ports)
+        gps_port_row = QtWidgets.QHBoxLayout()
+        gps_port_row.addWidget(self._gps_port_combo, stretch=1)
+        gps_port_row.addWidget(self._gps_refresh_button)
+        gps_port_widget = QtWidgets.QWidget(group)
+        gps_port_widget.setLayout(gps_port_row)
+
+        self._gps_baudrate_spin = QtWidgets.QSpinBox(group)
+        self._gps_baudrate_spin.setRange(1, 921600)
+        self._gps_mode_combo = QtWidgets.QComboBox(group)
+        self._gps_mode_combo.addItem("调试模式", "debug")
+        self._gps_mode_combo.addItem("部署模式", "deploy")
+        self._gps_poll_spin = QtWidgets.QDoubleSpinBox(group)
+        self._gps_poll_spin.setRange(0.01, 10.0)
+        self._gps_poll_spin.setDecimals(2)
+
+        layout.addWidget(self._gps_enabled_checkbox)
+        form.addRow("串口", gps_port_widget)
+        form.addRow("波特率", self._gps_baudrate_spin)
+        form.addRow("模式", self._gps_mode_combo)
+        form.addRow("轮询间隔(秒)", self._gps_poll_spin)
+        layout.addLayout(form)
+        return group
 
     def _build_analysis_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget(self)
@@ -450,8 +525,8 @@ class MainWindow(QtWidgets.QMainWindow):
         psd_plot = pg.PlotWidget(title="功率谱密度 PSD")
         psd_plot.showGrid(x=True, y=True, alpha=0.2)
         psd_plot.setBackground("w")
-        self._analysis_psd_curve = psd_plot.plot(pen=pg.mkPen("#d1495b", width=1.8))
         psd_plot.setLogMode(False, True)
+        self._analysis_psd_curve = psd_plot.plot(pen=pg.mkPen("#d1495b", width=1.8))
 
         splitter.addWidget(time_plot)
         splitter.addWidget(psd_plot)
@@ -474,6 +549,107 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_view.setReadOnly(True)
         layout.addWidget(self._log_view, stretch=1)
         return widget
+
+    def _configure_window_geometry(self) -> None:
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1280, 860)
+            return
+        available = screen.availableGeometry()
+        width, height = recommended_window_size(available.width(), available.height())
+        self.resize(width, height)
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
+
+    def _load_runtime_config_into_form(self) -> None:
+        config = self._runtime.current_config()
+
+        assert self._data1_rate_spin is not None
+        assert self._data2_rate_spin is not None
+        assert self._data_server_mode_combo is not None
+        assert self._data_host_edit is not None
+        assert self._data_port_spin is not None
+        assert self._data_remote_host_edit is not None
+        assert self._data_remote_port_spin is not None
+        assert self._frame_header_edit is not None
+        assert self._frame_header_size_combo is not None
+        assert self._length_field_size_combo is not None
+        assert self._length_field_format_combo is not None
+        assert self._length_field_units_combo is not None
+        assert self._byte_order_combo is not None
+        assert self._channel_layout_combo is not None
+        assert self._storage_enabled_checkbox is not None
+        assert self._storage_root_edit is not None
+        assert self._storage_duration_spin is not None
+        assert self._storage_network_edit is not None
+        assert self._storage_station_edit is not None
+        assert self._storage_location_edit is not None
+        assert self._datalink_enabled_checkbox is not None
+        assert self._datalink_host_edit is not None
+        assert self._datalink_port_spin is not None
+        assert self._datalink_ack_checkbox is not None
+        assert self._datalink_send_data2_checkbox is not None
+        assert self._capture_enabled_checkbox is not None
+        assert self._capture_path_edit is not None
+        assert self._gps_enabled_checkbox is not None
+        assert self._gps_port_combo is not None
+        assert self._gps_baudrate_spin is not None
+        assert self._gps_mode_combo is not None
+        assert self._gps_poll_spin is not None
+
+        processing = config["processing"]
+        data_server = config["data_server"]
+        protocol = config["protocol"]
+        storage = config["storage"]
+        datalink = config["datalink"]
+        capture = config["capture"]
+        gps = config["gps"]
+
+        self._data1_rate_spin.setValue(processing["data1_rate"])
+        self._data2_rate_spin.setValue(processing["data2_rate"])
+
+        self._data_server_mode_combo.setCurrentIndex(0 if data_server["mode"] == "client" else 1)
+        self._data_host_edit.setText(data_server["host"])
+        self._data_port_spin.setValue(data_server["port"])
+        self._data_remote_host_edit.setText(data_server["remote_host"])
+        self._data_remote_port_spin.setValue(data_server["remote_port"])
+
+        self._frame_header_edit.setText(str(protocol["frame_header"]))
+        self._frame_header_size_combo.setCurrentText(str(protocol["frame_header_size"]))
+        self._length_field_size_combo.setCurrentText(str(protocol["length_field_size"]))
+        self._length_field_format_combo.setCurrentIndex(
+            0 if protocol["length_field_format"] == "uint" else 1
+        )
+        self._length_field_units_combo.setCurrentIndex(0 if protocol["length_field_units"] == "bytes" else 1)
+        self._byte_order_combo.setCurrentIndex(0 if protocol["byte_order"] == "big" else 1)
+        self._channel_layout_combo.setCurrentIndex(
+            0 if protocol["channel_layout"] == "interleaved" else 1
+        )
+
+        self._storage_enabled_checkbox.setChecked(storage["enabled"])
+        self._storage_root_edit.setText(storage["root"])
+        self._storage_duration_spin.setValue(storage["file_duration_seconds"])
+        self._storage_network_edit.setText(storage["network"])
+        self._storage_station_edit.setText(storage["station"])
+        self._storage_location_edit.setText(storage["location"])
+
+        self._datalink_enabled_checkbox.setChecked(datalink["enabled"])
+        self._datalink_host_edit.setText(datalink["host"])
+        self._datalink_port_spin.setValue(datalink["port"])
+        self._datalink_ack_checkbox.setChecked(datalink["ack_required"])
+        self._datalink_send_data2_checkbox.setChecked(datalink["send_data2"])
+
+        self._capture_enabled_checkbox.setChecked(capture["enabled"])
+        self._capture_path_edit.setText(capture["path"])
+
+        self._gps_enabled_checkbox.setChecked(gps["enabled"])
+        self._gps_baudrate_spin.setValue(gps["baudrate"])
+        self._gps_mode_combo.setCurrentIndex(0 if gps["mode"] == "debug" else 1)
+        self._gps_poll_spin.setValue(gps["poll_interval_seconds"])
+        self._refresh_gps_ports(selected=gps["port"])
+        self._update_form_state()
+        self._set_feedback("表单已同步到当前运行时配置。")
 
     def _set_mode(self, name: str, checked: bool) -> None:
         if checked:
@@ -500,10 +676,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if filename:
             self._capture_path_edit.setText(filename)
 
-    def _refresh_gps_ports(self) -> None:
+    def _refresh_gps_ports(self, selected: str | None = None) -> None:
         if self._gps_port_combo is None:
             return
-        current = self._gps_port_combo.currentText().strip()
+        current = (selected if selected is not None else self._gps_port_combo.currentText()).strip()
         ports = self._runtime.gps_ports()
         self._gps_port_combo.blockSignals(True)
         self._gps_port_combo.clear()
@@ -515,10 +691,80 @@ class MainWindow(QtWidgets.QMainWindow):
             self._gps_port_combo.setCurrentText(current)
         self._gps_port_combo.blockSignals(False)
 
+    def _update_form_state(self) -> None:
+        if self._data_server_mode_combo is None:
+            return
+        client_mode = self._data_server_mode_combo.currentData() == "client"
+        server_mode = not client_mode
+
+        assert self._data_host_edit is not None
+        assert self._data_port_spin is not None
+        assert self._data_remote_host_edit is not None
+        assert self._data_remote_port_spin is not None
+        assert self._connection_mode_hint_label is not None
+
+        self._data_host_edit.setEnabled(server_mode)
+        self._data_port_spin.setEnabled(server_mode)
+        self._data_remote_host_edit.setEnabled(client_mode)
+        self._data_remote_port_spin.setEnabled(client_mode)
+        if client_mode:
+            self._connection_mode_hint_label.setText(
+                "当前为主动连接设备模式：系统会主动连接“设备地址/设备端口”；本地监听地址与端口仅作为保留配置。"
+            )
+        else:
+            self._connection_mode_hint_label.setText(
+                "当前为监听设备连接模式：系统会在“本地监听地址/端口”等待设备主动接入。"
+            )
+
+        self._set_section_enabled(
+            self._storage_enabled_checkbox.isChecked() if self._storage_enabled_checkbox is not None else False,
+            [
+                self._storage_root_edit,
+                self._storage_browse_button,
+                self._storage_duration_spin,
+                self._storage_network_edit,
+                self._storage_station_edit,
+                self._storage_location_edit,
+            ],
+        )
+        self._set_section_enabled(
+            self._datalink_enabled_checkbox.isChecked() if self._datalink_enabled_checkbox is not None else False,
+            [
+                self._datalink_host_edit,
+                self._datalink_port_spin,
+                self._datalink_ack_checkbox,
+                self._datalink_send_data2_checkbox,
+            ],
+        )
+        self._set_section_enabled(
+            self._capture_enabled_checkbox.isChecked() if self._capture_enabled_checkbox is not None else False,
+            [
+                self._capture_path_edit,
+                self._capture_browse_button,
+            ],
+        )
+        self._set_section_enabled(
+            self._gps_enabled_checkbox.isChecked() if self._gps_enabled_checkbox is not None else False,
+            [
+                self._gps_port_combo,
+                self._gps_refresh_button,
+                self._gps_baudrate_spin,
+                self._gps_mode_combo,
+                self._gps_poll_spin,
+            ],
+        )
+        self._update_processing_controls()
+
+    @staticmethod
+    def _set_section_enabled(enabled: bool, widgets: list[QtWidgets.QWidget | None]) -> None:
+        for widget in widgets:
+            if widget is not None:
+                widget.setEnabled(enabled)
+
     def _apply_runtime_config(self) -> None:
         assert self._data1_rate_spin is not None
         assert self._data2_rate_spin is not None
-        assert self._data_mode_combo is not None
+        assert self._data_server_mode_combo is not None
         assert self._data_host_edit is not None
         assert self._data_port_spin is not None
         assert self._data_remote_host_edit is not None
@@ -531,12 +777,12 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._byte_order_combo is not None
         assert self._channel_layout_combo is not None
         assert self._storage_enabled_checkbox is not None
-        assert self._datalink_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
+        assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
         assert self._datalink_ack_checkbox is not None
@@ -555,7 +801,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "data2_rate": self._data2_rate_spin.value(),
             },
             "data_server": {
-                "mode": self._data_mode_combo.currentData(),
+                "mode": self._data_server_mode_combo.currentData(),
                 "host": self._data_host_edit.text().strip() or "0.0.0.0",
                 "port": self._data_port_spin.value(),
                 "remote_host": self._data_remote_host_edit.text().strip() or "169.254.56.252",
@@ -572,7 +818,7 @@ class MainWindow(QtWidgets.QMainWindow):
             },
             "storage": {
                 "enabled": self._storage_enabled_checkbox.isChecked(),
-                "root": self._storage_root_edit.text().strip(),
+                "root": self._storage_root_edit.text().strip() or "./var/storage",
                 "file_duration_seconds": self._storage_duration_spin.value(),
                 "network": self._storage_network_edit.text().strip() or "SC",
                 "station": self._storage_station_edit.text().strip() or "S0001",
@@ -599,17 +845,33 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         try:
             self._runtime.update_config(payload)
+            self._set_feedback("配置已应用。")
+            self.statusBar().showMessage("配置已应用", 3000)
             self._update_processing_controls()
         except Exception as exc:  # noqa: BLE001
+            self._set_feedback(f"应用失败: {exc}", is_error=True)
             QtWidgets.QMessageBox.critical(self, "应用配置失败", str(exc))
 
     def _start_processing(self) -> None:
         self._runtime.resume_processing()
         self._update_processing_controls()
+        self.statusBar().showMessage("数据接收已启动", 3000)
 
     def _pause_processing(self) -> None:
         self._runtime.pause_processing()
         self._update_processing_controls()
+        self.statusBar().showMessage("数据接收已停止", 3000)
+
+    def _set_feedback(self, text: str, *, is_error: bool = False) -> None:
+        if self._config_feedback_label is None:
+            return
+        palette = self._config_feedback_label.palette()
+        role = self._config_feedback_label.foregroundRole()
+        color = "#b3261e" if is_error else "#1d4ed8"
+        self._config_feedback_label.setText(text)
+        self._config_feedback_label.setStyleSheet(f"color: {color};")
+        self._config_feedback_label.setPalette(palette)
+        self._config_feedback_label.setForegroundRole(role)
 
     def _refresh(self) -> None:
         snapshot = self._runtime.snapshot()
@@ -620,52 +882,62 @@ class MainWindow(QtWidgets.QMainWindow):
             if data is None or data.shape[0] <= index or data.shape[1] == 0:
                 curve.setData([])
                 continue
-            x = np.arange(data.shape[1])
-            curve.setData(x, data[index])
+            curve.setData(np.arange(data.shape[1]), data[index])
         self._update_analysis(snapshot, data)
         self._update_logs()
 
     def _update_status(self, snapshot: RuntimeSnapshot) -> None:
         values = {
-            "data_connected": str(snapshot.data_connected),
-            "control_connected": str(snapshot.control_connected),
-            "source_sample_rate": "-" if snapshot.source_sample_rate is None else f"{snapshot.source_sample_rate:.1f}",
-            "packets_received": str(snapshot.packets_received),
-            "bytes_received": str(snapshot.bytes_received),
+            "data_connected": "已连接" if snapshot.data_connected else "未连接",
+            "control_connected": "已连接" if snapshot.control_connected else "未连接",
+            "source_sample_rate": "-" if snapshot.source_sample_rate is None else f"{snapshot.source_sample_rate:.2f} Hz",
+            "packets_received": f"{snapshot.packets_received:,}",
+            "bytes_received": f"{snapshot.bytes_received:,}",
+            "frames_dropped": f"{snapshot.frames_dropped:,}",
             "queue_depth": str(snapshot.queue_depth),
-            "data1_rate": f"{snapshot.data1_rate:.1f}",
-            "data2_rate": f"{snapshot.data2_rate:.1f}",
-            "storage_enabled": str(snapshot.storage_enabled),
-            "datalink_enabled": str(snapshot.datalink_enabled),
-            "datalink_connected": str(snapshot.datalink_connected),
-            "datalink_packets_sent": str(snapshot.datalink_packets_sent),
-            "datalink_bytes_sent": str(snapshot.datalink_bytes_sent),
-            "datalink_reconnects": str(snapshot.datalink_reconnects),
+            "storage_enabled": "已启用" if snapshot.storage_enabled else "未启用",
+            "data1_rate": f"{snapshot.data1_rate:.2f} Hz",
+            "data2_rate": f"{snapshot.data2_rate:.2f} Hz",
+            "storage_queue_depth": str(snapshot.storage_queue_depth),
+            "storage_frames_dropped": f"{snapshot.storage_frames_dropped:,}",
+            "storage_last_error": snapshot.storage_last_error or "-",
+            "datalink_enabled": "已启用" if snapshot.datalink_enabled else "未启用",
+            "datalink_connected": "已连接" if snapshot.datalink_connected else "未连接",
+            "datalink_packets_sent": f"{snapshot.datalink_packets_sent:,}",
+            "datalink_bytes_sent": f"{snapshot.datalink_bytes_sent:,}",
+            "datalink_reconnects": f"{snapshot.datalink_reconnects:,}",
             "datalink_last_error": snapshot.datalink_last_error or "-",
-            "capture_enabled": str(snapshot.capture_enabled),
-            "gps_enabled": str(snapshot.gps_enabled),
-            "gps_connected": str(snapshot.gps_connected),
+            "datalink_publish_queue_depth": str(snapshot.datalink_publish_queue_depth),
+            "datalink_publish_frames_dropped": f"{snapshot.datalink_publish_frames_dropped:,}",
+            "datalink_publish_last_error": snapshot.datalink_publish_last_error or "-",
+            "capture_enabled": "已启用" if snapshot.capture_enabled else "未启用",
+            "gps_enabled": "已启用" if snapshot.gps_enabled else "未启用",
+            "gps_connected": "已连接" if snapshot.gps_connected else "未连接",
             "gps_mode": snapshot.gps_mode,
             "gps_port": snapshot.gps_port or "-",
             "gps_last_timestamp": snapshot.gps_last_timestamp or "-",
-            "gps_fallback_active": str(snapshot.gps_fallback_active),
             "gps_last_error": snapshot.gps_last_error or "-",
+            "gps_fallback_active": "是" if snapshot.gps_fallback_active else "否",
             "last_error": snapshot.last_error or "-",
         }
         for key, label in self._status_labels.items():
-            label.setText(values[key])
+            label.setText(values.get(key, "-"))
 
     def _update_processing_controls(self) -> None:
         if (
             self._processing_state_label is None
             or self._start_processing_button is None
             or self._pause_processing_button is None
+            or self._ingest_help_label is None
         ):
             return
         active = self._runtime.is_processing_active()
         self._processing_state_label.setText("数据接收状态: 运行中" if active else "数据接收状态: 已停止")
         self._start_processing_button.setEnabled(not active)
         self._pause_processing_button.setEnabled(active)
+        self._ingest_help_label.setText(
+            "当前运行中，应用配置后会按新参数自动重连。" if active else "当前未运行，应用配置后只更新参数，不会自动启动。"
+        )
 
     def _snapshot_data(self, snapshot: RuntimeSnapshot) -> np.ndarray | None:
         if self._data_mode == "raw":

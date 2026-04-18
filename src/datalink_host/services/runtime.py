@@ -13,11 +13,18 @@ from typing import Any
 import numpy as np
 
 from datalink_host.core.config import AppSettings
+from datalink_host.core.validation import (
+    parse_choice,
+    parse_port,
+    parse_positive_float,
+    parse_positive_int,
+)
 from datalink_host.debug.capture import PacketCaptureWriter
 from datalink_host.ingest.control_server import TcpControlServer
 from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame, RuntimeSnapshot, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline
+from datalink_host.services.background_sink import BackgroundFrameSink
 from datalink_host.services.gps_time import GpsTimeService, format_timestamp_us
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher
@@ -27,9 +34,23 @@ LOGGER = logging.getLogger(__name__)
 QUEUE_BACKLOG_WARNING_DEPTH = 8
 FRAME_QUEUE_WAIT_WARNING_MS = 200.0
 FRAME_PROCESSING_WARNING_MS = 200.0
-FAN_OUT_WARNING_MS = 200.0
+FAN_OUT_ENQUEUE_WARNING_MS = 50.0
 MONITOR_PACKET_HISTORY_LIMIT = 40
 MONITOR_PACKET_DUMP_LIMIT_BYTES = 1024
+STORAGE_SINK_QUEUE_MAXSIZE = 16
+STORAGE_SINK_BACKLOG_WARNING_DEPTH = 4
+STORAGE_SINK_QUEUE_WAIT_WARNING_MS = 500.0
+STORAGE_SINK_HANDLE_WARNING_MS = 500.0
+DATALINK_SINK_QUEUE_MAXSIZE = 16
+DATALINK_SINK_BACKLOG_WARNING_DEPTH = 4
+DATALINK_SINK_QUEUE_WAIT_WARNING_MS = 500.0
+DATALINK_SINK_HANDLE_WARNING_MS = 500.0
+DATA_SERVER_MODES = {"client", "server"}
+LENGTH_FIELD_FORMATS = {"uint", "float64"}
+LENGTH_FIELD_UNITS = {"bytes", "values"}
+BYTE_ORDERS = {"little", "big"}
+CHANNEL_LAYOUTS = {"interleaved", "channel-major"}
+GPS_MODES = {"debug", "deploy"}
 
 
 class RuntimeService:
@@ -38,6 +59,22 @@ class RuntimeService:
         self._pipeline = ProcessingPipeline(settings.processing)
         self._storage = MiniSeedWriter(settings.storage)
         self._datalink = DataLinkPublisher(settings.datalink, settings.storage)
+        self._storage_sink = BackgroundFrameSink(
+            "storage",
+            self._storage.write,
+            maxsize=STORAGE_SINK_QUEUE_MAXSIZE,
+            backlog_warning_depth=STORAGE_SINK_BACKLOG_WARNING_DEPTH,
+            queue_wait_warning_ms=STORAGE_SINK_QUEUE_WAIT_WARNING_MS,
+            handle_warning_ms=STORAGE_SINK_HANDLE_WARNING_MS,
+        )
+        self._datalink_sink = BackgroundFrameSink(
+            "datalink-publish",
+            self._datalink.publish,
+            maxsize=DATALINK_SINK_QUEUE_MAXSIZE,
+            backlog_warning_depth=DATALINK_SINK_BACKLOG_WARNING_DEPTH,
+            queue_wait_warning_ms=DATALINK_SINK_QUEUE_WAIT_WARNING_MS,
+            handle_warning_ms=DATALINK_SINK_HANDLE_WARNING_MS,
+        )
         self._gps_time = GpsTimeService(settings.gps)
         self._capture = PacketCaptureWriter(settings.capture.path) if settings.capture.enabled else None
         self._queue: queue.Queue[ChannelFrame] = queue.Queue(maxsize=32)
@@ -47,6 +84,7 @@ class RuntimeService:
             control_connected=False,
             packets_received=0,
             bytes_received=0,
+            frames_dropped=0,
             last_error=None,
             source_sample_rate=None,
             data1_rate=settings.processing.data1_rate,
@@ -59,6 +97,12 @@ class RuntimeService:
             datalink_reconnects=0,
             datalink_last_error=None,
             storage_enabled=settings.storage.enabled,
+            datalink_publish_queue_depth=0,
+            datalink_publish_frames_dropped=0,
+            datalink_publish_last_error=None,
+            storage_queue_depth=0,
+            storage_frames_dropped=0,
+            storage_last_error=None,
             capture_enabled=settings.capture.enabled,
             gps_enabled=settings.gps.enabled,
             gps_connected=False,
@@ -114,6 +158,8 @@ class RuntimeService:
         self._runtime_started = True
         self._stop_event.clear()
         self._gps_time.start()
+        self._storage_sink.start()
+        self._datalink_sink.start()
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
         self._processor_thread.start()
         self._control_server.start()
@@ -127,6 +173,8 @@ class RuntimeService:
         self.pause_processing()
         self._control_server.stop()
         self._processor_thread.join(timeout=2.0)
+        self._storage_sink.stop()
+        self._datalink_sink.stop()
         self._gps_time.stop()
         self._storage.close()
         self._datalink.close()
@@ -161,9 +209,11 @@ class RuntimeService:
             self._snapshot.updated_at = time.time()
 
     def snapshot(self) -> RuntimeSnapshot:
+        storage_stats = self._storage_sink.stats()
+        datalink_publish_stats = self._datalink_sink.stats()
+        datalink_stats = self._datalink.stats()
+        gps_status = self._gps_time.status()
         with self._lock:
-            datalink_stats = self._datalink.stats()
-            gps_status = self._gps_time.status()
             gps_last_timestamp = self._snapshot.gps_last_timestamp
             if gps_last_timestamp is None and gps_status.last_timestamp_us is not None:
                 gps_last_timestamp = format_timestamp_us(gps_status.last_timestamp_us)
@@ -175,6 +225,12 @@ class RuntimeService:
                 datalink_bytes_sent=datalink_stats.bytes_sent,
                 datalink_reconnects=datalink_stats.reconnects,
                 datalink_last_error=datalink_stats.last_error,
+                datalink_publish_queue_depth=datalink_publish_stats.queue_depth,
+                datalink_publish_frames_dropped=datalink_publish_stats.frames_dropped,
+                datalink_publish_last_error=datalink_publish_stats.last_error,
+                storage_queue_depth=storage_stats.queue_depth,
+                storage_frames_dropped=storage_stats.frames_dropped,
+                storage_last_error=storage_stats.last_error,
                 gps_enabled=self._settings.gps.enabled,
                 gps_connected=gps_status.connected,
                 gps_mode=self._settings.gps.mode,
@@ -311,8 +367,14 @@ class RuntimeService:
             restart_data_server = False
 
             if "data1_rate" in processing or "data2_rate" in processing:
-                data1_rate = float(processing.get("data1_rate", self._settings.processing.data1_rate))
-                data2_rate = float(processing.get("data2_rate", self._settings.processing.data2_rate))
+                data1_rate = parse_positive_float(
+                    processing.get("data1_rate", self._settings.processing.data1_rate),
+                    "processing.data1_rate",
+                )
+                data2_rate = parse_positive_float(
+                    processing.get("data2_rate", self._settings.processing.data2_rate),
+                    "processing.data2_rate",
+                )
                 self._pipeline.update_rates(data1_rate, data2_rate)
                 self._settings.processing.data1_rate = data1_rate
                 self._settings.processing.data2_rate = data2_rate
@@ -326,30 +388,48 @@ class RuntimeService:
                 protocol_changed = False
                 if "frame_header" in protocol:
                     frame_header = int(str(protocol["frame_header"]), 0)
+                    if frame_header < 0:
+                        raise ValueError("protocol.frame_header must be greater than or equal to 0")
                     protocol_changed = protocol_changed or frame_header != self._settings.protocol.frame_header
                     self._settings.protocol.frame_header = frame_header
                 if "frame_header_size" in protocol:
                     frame_header_size = int(protocol["frame_header_size"])
+                    if frame_header_size not in {2, 4, 8}:
+                        raise ValueError("protocol.frame_header_size must be one of: 2, 4, 8")
                     protocol_changed = protocol_changed or frame_header_size != self._settings.protocol.frame_header_size
                     self._settings.protocol.frame_header_size = frame_header_size
                 if "length_field_size" in protocol:
                     length_field_size = int(protocol["length_field_size"])
+                    if length_field_size not in {4, 8}:
+                        raise ValueError("protocol.length_field_size must be one of: 4, 8")
                     protocol_changed = protocol_changed or length_field_size != self._settings.protocol.length_field_size
                     self._settings.protocol.length_field_size = length_field_size
                 if "length_field_format" in protocol:
-                    length_field_format = str(protocol["length_field_format"])
+                    length_field_format = parse_choice(
+                        protocol["length_field_format"],
+                        "protocol.length_field_format",
+                        LENGTH_FIELD_FORMATS,
+                    )
                     protocol_changed = protocol_changed or length_field_format != self._settings.protocol.length_field_format
                     self._settings.protocol.length_field_format = length_field_format
                 if "length_field_units" in protocol:
-                    length_field_units = str(protocol["length_field_units"])
+                    length_field_units = parse_choice(
+                        protocol["length_field_units"],
+                        "protocol.length_field_units",
+                        LENGTH_FIELD_UNITS,
+                    )
                     protocol_changed = protocol_changed or length_field_units != self._settings.protocol.length_field_units
                     self._settings.protocol.length_field_units = length_field_units
                 if "byte_order" in protocol:
-                    byte_order = str(protocol["byte_order"])
+                    byte_order = parse_choice(protocol["byte_order"], "protocol.byte_order", BYTE_ORDERS)
                     protocol_changed = protocol_changed or byte_order != self._settings.protocol.byte_order
                     self._settings.protocol.byte_order = byte_order
                 if "channel_layout" in protocol:
-                    channel_layout = str(protocol["channel_layout"])
+                    channel_layout = parse_choice(
+                        protocol["channel_layout"],
+                        "protocol.channel_layout",
+                        CHANNEL_LAYOUTS,
+                    )
                     protocol_changed = protocol_changed or channel_layout != self._settings.protocol.channel_layout
                     self._settings.protocol.channel_layout = channel_layout
                 if "channels" in protocol:
@@ -361,7 +441,7 @@ class RuntimeService:
             if data_server:
                 data_server_changed = False
                 if "mode" in data_server:
-                    mode = str(data_server["mode"])
+                    mode = parse_choice(data_server["mode"], "data_server.mode", DATA_SERVER_MODES)
                     data_server_changed = data_server_changed or mode != self._settings.data_server.mode
                     self._settings.data_server.mode = mode
                 if "host" in data_server:
@@ -369,7 +449,7 @@ class RuntimeService:
                     data_server_changed = data_server_changed or host != self._settings.data_server.host
                     self._settings.data_server.host = host
                 if "port" in data_server:
-                    port = int(data_server["port"])
+                    port = parse_port(data_server["port"], "data_server.port")
                     data_server_changed = data_server_changed or port != self._settings.data_server.port
                     self._settings.data_server.port = port
                 if "remote_host" in data_server:
@@ -377,7 +457,7 @@ class RuntimeService:
                     data_server_changed = data_server_changed or remote_host != self._settings.data_server.remote_host
                     self._settings.data_server.remote_host = remote_host
                 if "remote_port" in data_server:
-                    remote_port = int(data_server["remote_port"])
+                    remote_port = parse_port(data_server["remote_port"], "data_server.remote_port")
                     data_server_changed = data_server_changed or remote_port != self._settings.data_server.remote_port
                     self._settings.data_server.remote_port = remote_port
                 restart_data_server = restart_data_server or data_server_changed
@@ -389,7 +469,10 @@ class RuntimeService:
                 if "root" in storage:
                     new_storage.root = Path(storage["root"])
                 if "file_duration_seconds" in storage:
-                    new_storage.file_duration_seconds = int(storage["file_duration_seconds"])
+                    new_storage.file_duration_seconds = parse_positive_int(
+                        storage["file_duration_seconds"],
+                        "storage.file_duration_seconds",
+                    )
                 if "network" in storage:
                     new_storage.network = str(storage["network"])
                 if "station" in storage:
@@ -412,7 +495,7 @@ class RuntimeService:
                 if "host" in datalink:
                     self._settings.datalink.host = str(datalink["host"])
                 if "port" in datalink:
-                    self._settings.datalink.port = int(datalink["port"])
+                    self._settings.datalink.port = parse_port(datalink["port"], "datalink.port")
                 if "stream_id_template" in datalink:
                     self._settings.datalink.stream_id_template = str(datalink["stream_id_template"])
                 if "ack_required" in datalink:
@@ -428,14 +511,15 @@ class RuntimeService:
                 if "port" in gps:
                     self._settings.gps.port = str(gps["port"])
                 if "baudrate" in gps:
-                    self._settings.gps.baudrate = int(gps["baudrate"])
+                    self._settings.gps.baudrate = parse_positive_int(gps["baudrate"], "gps.baudrate")
                 if "mode" in gps:
-                    mode = str(gps["mode"])
-                    if mode not in {"debug", "deploy"}:
-                        raise ValueError("GPS mode must be 'debug' or 'deploy'")
+                    mode = parse_choice(gps["mode"], "gps.mode", GPS_MODES)
                     self._settings.gps.mode = mode
                 if "poll_interval_seconds" in gps:
-                    self._settings.gps.poll_interval_seconds = float(gps["poll_interval_seconds"])
+                    self._settings.gps.poll_interval_seconds = parse_positive_float(
+                        gps["poll_interval_seconds"],
+                        "gps.poll_interval_seconds",
+                    )
                 self._gps_time.update_settings(deepcopy(self._settings.gps))
                 self._snapshot.gps_enabled = self._settings.gps.enabled
                 self._snapshot.gps_mode = self._settings.gps.mode
@@ -489,7 +573,11 @@ class RuntimeService:
         try:
             self._queue.put_nowait(frame)
         except queue.Full:
-            self._set_error("Processing queue is full")
+            with self._lock:
+                self._snapshot.frames_dropped += 1
+                self._snapshot.last_error = "Processing queue is full"
+                self._snapshot.updated_at = time.time()
+            LOGGER.warning("Processing queue is full; dropping decoded frame")
             return
         self._frames_enqueued += 1
         if self._frames_enqueued == 1:
@@ -557,7 +645,7 @@ class RuntimeService:
                 processed = self._pipeline.process(frame)
                 pipeline_ms = (time.monotonic() - processing_started_at) * 1000.0
                 fan_out_started_at = time.monotonic()
-                storage_ms, datalink_publish_ms = self._fan_out(processed)
+                storage_enqueue_ms, datalink_publish_enqueue_ms = self._fan_out(processed)
                 fan_out_ms = (time.monotonic() - fan_out_started_at) * 1000.0
                 total_ms = (time.monotonic() - processing_started_at) * 1000.0
                 self._frames_processed += 1
@@ -573,16 +661,17 @@ class RuntimeService:
                 if (
                     queue_wait_ms >= FRAME_QUEUE_WAIT_WARNING_MS
                     or pipeline_ms >= FRAME_PROCESSING_WARNING_MS
-                    or fan_out_ms >= FAN_OUT_WARNING_MS
+                    or fan_out_ms >= FAN_OUT_ENQUEUE_WARNING_MS
                 ):
                     LOGGER.warning(
-                        "Frame processing is lagging: queue_wait_ms=%.1f, pipeline_ms=%.1f, storage_ms=%.1f, "
-                        "datalink_publish_ms=%.1f, fan_out_ms=%.1f, total_ms=%.1f, queue_depth_after=%s, "
+                        "Frame processing is lagging: queue_wait_ms=%.1f, pipeline_ms=%.1f, "
+                        "storage_enqueue_ms=%.1f, datalink_publish_enqueue_ms=%.1f, "
+                        "fan_out_ms=%.1f, total_ms=%.1f, queue_depth_after=%s, "
                         "sample_rate=%.3f, raw_shape=%s, data1_shape=%s, data2_shape=%s",
                         queue_wait_ms,
                         pipeline_ms,
-                        storage_ms,
-                        datalink_publish_ms,
+                        storage_enqueue_ms,
+                        datalink_publish_enqueue_ms,
                         fan_out_ms,
                         total_ms,
                         queue_depth_after,
@@ -603,20 +692,17 @@ class RuntimeService:
                 self._set_error(f"Processing pipeline failed: {exc}")
 
     def _fan_out(self, frame: ProcessedFrame) -> tuple[float, float]:
-        storage_ms = 0.0
-        datalink_publish_ms = 0.0
+        storage_enqueue_ms = 0.0
+        datalink_publish_enqueue_ms = 0.0
         if self._settings.storage.enabled:
             storage_started_at = time.monotonic()
-            self._storage.write(frame)
-            storage_ms = (time.monotonic() - storage_started_at) * 1000.0
+            self._storage_sink.submit(frame)
+            storage_enqueue_ms = (time.monotonic() - storage_started_at) * 1000.0
         if self._settings.datalink.enabled:
-            try:
-                publish_started_at = time.monotonic()
-                self._datalink.publish(frame)
-                datalink_publish_ms = (time.monotonic() - publish_started_at) * 1000.0
-            except Exception as exc:  # noqa: BLE001
-                self._set_error(f"DataLink publish failed: {exc}")
-        return storage_ms, datalink_publish_ms
+            publish_started_at = time.monotonic()
+            self._datalink_sink.submit(frame)
+            datalink_publish_enqueue_ms = (time.monotonic() - publish_started_at) * 1000.0
+        return storage_enqueue_ms, datalink_publish_enqueue_ms
 
     def _set_data_connected(self, connected: bool) -> None:
         with self._lock:
@@ -650,17 +736,24 @@ class RuntimeService:
                     "control_connected": snapshot.control_connected,
                     "packets_received": snapshot.packets_received,
                     "bytes_received": snapshot.bytes_received,
+                    "frames_dropped": snapshot.frames_dropped,
                     "queue_depth": snapshot.queue_depth,
                     "source_sample_rate": snapshot.source_sample_rate,
                     "data1_rate": snapshot.data1_rate,
                     "data2_rate": snapshot.data2_rate,
                     "storage_enabled": snapshot.storage_enabled,
+                    "storage_queue_depth": snapshot.storage_queue_depth,
+                    "storage_frames_dropped": snapshot.storage_frames_dropped,
+                    "storage_last_error": snapshot.storage_last_error,
                     "datalink_enabled": snapshot.datalink_enabled,
                     "datalink_connected": snapshot.datalink_connected,
                     "datalink_packets_sent": snapshot.datalink_packets_sent,
                     "datalink_bytes_sent": snapshot.datalink_bytes_sent,
                     "datalink_reconnects": snapshot.datalink_reconnects,
                     "datalink_last_error": snapshot.datalink_last_error,
+                    "datalink_publish_queue_depth": snapshot.datalink_publish_queue_depth,
+                    "datalink_publish_frames_dropped": snapshot.datalink_publish_frames_dropped,
+                    "datalink_publish_last_error": snapshot.datalink_publish_last_error,
                     "capture_enabled": snapshot.capture_enabled,
                     "gps_enabled": snapshot.gps_enabled,
                     "gps_connected": snapshot.gps_connected,

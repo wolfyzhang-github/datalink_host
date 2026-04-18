@@ -837,6 +837,75 @@ class ProtocolTests(unittest.TestCase):
 
         runtime._datalink.close()
 
+    def test_packet_decoder_rejects_oversized_payload(self) -> None:
+        settings = ProtocolSettings(
+            frame_header=11,
+            frame_header_size=2,
+            length_field_size=8,
+            length_field_format="float64",
+            length_field_units="values",
+            channels=8,
+            channel_layout="interleaved",
+        )
+        channels = np.arange(80, dtype=np.float64).reshape(8, 10)
+        payload = build_packet(1000.0, channels, settings)
+
+        decoder = PacketDecoder(settings, max_payload_bytes=64)
+        with self.assertRaisesRegex(ValueError, "exceeds safety limit"):
+            decoder.feed(payload)
+
+    def test_runtime_marks_frame_drop_when_processing_queue_is_full(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        for _ in range(runtime._queue.maxsize):
+            runtime._queue.put_nowait(ChannelFrame(sample_rate=10.0, channels=np.zeros((8, 1), dtype=np.float64)))
+
+        runtime._on_frame(
+            ChannelFrame(
+                sample_rate=100.0,
+                channels=np.zeros((8, 4), dtype=np.float64),
+                received_at=1_700_000_000.0,
+            )
+        )
+
+        snapshot = runtime.snapshot()
+        self.assertEqual(1, snapshot.frames_dropped)
+        self.assertEqual("Processing queue is full", snapshot.last_error)
+        runtime._datalink.close()
+
+    def test_web_api_exposes_logs_and_extended_queue_metrics(self) -> None:
+        configure_logging()
+        import logging
+
+        logging.getLogger("test.web").error("web-log-check")
+        runtime = RuntimeService(AppSettings())
+        queued_frame = ProcessedFrame(
+            sample_rate=100.0,
+            raw=np.zeros((8, 10), dtype=np.float64),
+            unwrapped=np.zeros((8, 10), dtype=np.float64),
+            data1=np.ones((8, 10), dtype=np.float64),
+            data1_sample_rate=100.0,
+            data2=np.zeros((8, 0), dtype=np.float64),
+            data2_sample_rate=10.0,
+            received_at=1_700_000_000.0,
+            timestamp_us=1_700_000_000_000_000,
+        )
+        runtime._storage_sink.submit(queued_frame)
+        runtime._datalink_sink.submit(queued_frame)
+        with runtime._lock:
+            runtime._snapshot.frames_dropped = 3
+        app = create_app(runtime)
+
+        with TestClient(app) as client:
+            status_payload = client.get("/api/status").json()["payload"]
+            self.assertEqual(3, status_payload["frames_dropped"])
+            self.assertGreaterEqual(status_payload["storage_queue_depth"], 1)
+            self.assertGreaterEqual(status_payload["datalink_publish_queue_depth"], 1)
+
+            logs_payload = client.get("/api/logs?limit=50&level=error").json()["payload"]
+            self.assertTrue(any("web-log-check" in line for line in logs_payload["lines"]))
+
+        runtime._datalink.close()
+
     def test_compute_psd_returns_frequency_axis(self) -> None:
         signal = np.sin(2 * np.pi * 5 * np.arange(256) / 100.0)
         freqs, psd = compute_psd(signal, 100.0)

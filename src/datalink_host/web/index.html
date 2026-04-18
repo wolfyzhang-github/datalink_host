@@ -1,0 +1,1369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>datalink-host 远程控制台</title>
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+  >
+  <style>
+    body {
+      background: #f8f9fb;
+    }
+
+    .chart-shell {
+      min-height: 320px;
+      height: 320px;
+    }
+
+    .chart-shell canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    .console {
+      min-height: 320px;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .metric-card .metric-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+    }
+
+    .sticky-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 1020;
+      background: rgba(248, 249, 251, 0.92);
+      backdrop-filter: blur(10px);
+    }
+  </style>
+</head>
+<body>
+  <div class="container-fluid py-3 py-lg-4">
+    <div class="row g-3 mb-3 sticky-toolbar pb-2">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="d-flex flex-column flex-xl-row gap-3 align-items-xl-end">
+              <div class="flex-grow-1">
+                <div class="d-flex flex-column flex-md-row gap-3">
+                  <div class="flex-fill">
+                    <label class="form-label mb-1" for="api-host">API 地址</label>
+                    <input id="api-host" class="form-control" type="text" placeholder="127.0.0.1">
+                  </div>
+                  <div style="width: 10rem;">
+                    <label class="form-label mb-1" for="api-port">端口</label>
+                    <input id="api-port" class="form-control" type="number" min="1" max="65535" placeholder="18080">
+                  </div>
+                </div>
+                <div class="small text-secondary mt-2">
+                  这是纯静态页面。输入目标服务的 IP 和端口后，页面会直接调用远程 `datalink-host` 的 Web API。
+                </div>
+              </div>
+              <div class="d-flex flex-wrap gap-2">
+                <button id="connect-btn" class="btn btn-primary">连接远程 API</button>
+                <button id="use-current-origin-btn" class="btn btn-outline-secondary">使用当前地址</button>
+                <button id="reload-config-btn" class="btn btn-outline-secondary" disabled>重载配置</button>
+                <button id="apply-config-btn" class="btn btn-success" disabled>应用配置</button>
+                <button id="start-btn" class="btn btn-outline-primary" disabled>启动接收</button>
+                <button id="stop-btn" class="btn btn-outline-danger" disabled>停止接收</button>
+              </div>
+            </div>
+            <div class="d-flex flex-column flex-lg-row gap-2 align-items-lg-center mt-3">
+              <div class="badge text-bg-light fs-6 px-3 py-2">目标: <span id="target-url">未连接</span></div>
+              <div id="connection-alert" class="alert alert-secondary py-2 px-3 mb-0 flex-grow-1">尚未连接远程服务。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-sm-6 col-xl-2">
+        <div class="card metric-card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small">接收状态</div>
+            <div class="metric-value" id="metric-processing">-</div>
+            <div class="small text-secondary" id="metric-data-connection">数据连接 -</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-2">
+        <div class="card metric-card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small">已收包数</div>
+            <div class="metric-value" id="metric-packets">0</div>
+            <div class="small text-secondary">字节 <span id="metric-bytes">0</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-2">
+        <div class="card metric-card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small">源采样率</div>
+            <div class="metric-value" id="metric-rate">-</div>
+            <div class="small text-secondary">处理队列 <span id="metric-queue">0</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-2">
+        <div class="card metric-card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small">处理丢帧</div>
+            <div class="metric-value" id="metric-dropped">0</div>
+            <div class="small text-secondary">存储队列 <span id="metric-storage-queue">0</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-2">
+        <div class="card metric-card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small">远传连接</div>
+            <div class="metric-value" id="metric-datalink">-</div>
+            <div class="small text-secondary">发布队列 <span id="metric-datalink-queue">0</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-2">
+        <div class="card metric-card shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small">GPS</div>
+            <div class="metric-value" id="metric-gps">-</div>
+            <div class="small text-secondary" id="metric-gps-time">时间 -</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="nav nav-tabs mb-3" id="main-tab" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">总览</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-wave" type="button" role="tab">波形</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analysis" type="button" role="tab">分析</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button" role="tab">日志</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-packets" type="button" role="tab">原始包</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-config" type="button" role="tab">配置</button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+      <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+        <div class="row g-3">
+          <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+              <div class="card-header">运行状态</div>
+              <div class="card-body">
+                <div class="list-group" id="overview-status-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+              <div class="card-header">异常与拥塞</div>
+              <div class="card-body d-grid gap-3">
+                <div>
+                  <div class="text-secondary small mb-1">最近错误</div>
+                  <div id="overview-last-error" class="form-control bg-body-tertiary">-</div>
+                </div>
+                <div>
+                  <div class="text-secondary small mb-1">存储错误</div>
+                  <div id="overview-storage-error" class="form-control bg-body-tertiary">-</div>
+                </div>
+                <div>
+                  <div class="text-secondary small mb-1">远传错误</div>
+                  <div id="overview-datalink-error" class="form-control bg-body-tertiary">-</div>
+                </div>
+                <div>
+                  <div class="text-secondary small mb-1">远传发布错误</div>
+                  <div id="overview-datalink-publish-error" class="form-control bg-body-tertiary">-</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-wave" role="tabpanel">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="row g-3 align-items-end mb-3">
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="wave-mode">波形来源</label>
+                <select id="wave-mode" class="form-select">
+                  <option value="raw">原始值</option>
+                  <option value="unwrapped" selected>相位展开</option>
+                  <option value="data1">降采样1</option>
+                  <option value="data2">降采样2</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="wave-channel">显示通道</label>
+                <select id="wave-channel" class="form-select"></select>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="max-points">最大点数</label>
+                <select id="max-points" class="form-select">
+                  <option value="512">512</option>
+                  <option value="1024" selected>1024</option>
+                  <option value="2048">2048</option>
+                  <option value="4096">4096</option>
+                </select>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="refresh-ms">刷新周期</label>
+                <select id="refresh-ms" class="form-select">
+                  <option value="250">250 ms</option>
+                  <option value="500" selected>500 ms</option>
+                  <option value="1000">1 s</option>
+                </select>
+              </div>
+            </div>
+            <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+              <div class="small text-secondary" id="wave-summary">等待连接远程服务。</div>
+              <div class="small text-secondary" id="wave-meta">-</div>
+            </div>
+            <div class="chart-shell">
+              <canvas id="wave-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-analysis" role="tabpanel">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="row g-3 align-items-end mb-3">
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="analysis-channel">分析通道</label>
+                <select id="analysis-channel" class="form-select"></select>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="analysis-window">PSD 样本数</label>
+                <select id="analysis-window" class="form-select">
+                  <option value="256">256</option>
+                  <option value="512">512</option>
+                  <option value="1024" selected>1024</option>
+                  <option value="2048">2048</option>
+                </select>
+              </div>
+            </div>
+            <div class="row g-3">
+              <div class="col-lg-6">
+                <div class="card bg-body-tertiary border-0">
+                  <div class="card-body">
+                    <div class="small text-secondary mb-2">时域波形</div>
+                    <div class="chart-shell">
+                      <canvas id="analysis-time-chart"></canvas>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card bg-body-tertiary border-0">
+                  <div class="card-body">
+                    <div class="small text-secondary mb-2">PSD</div>
+                    <div class="chart-shell">
+                      <canvas id="analysis-psd-chart"></canvas>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-logs" role="tabpanel">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="row g-3 align-items-end mb-3">
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="log-level">日志级别</label>
+                <select id="log-level" class="form-select">
+                  <option value="all">全部</option>
+                  <option value="info">信息</option>
+                  <option value="warning">警告</option>
+                  <option value="error">错误</option>
+                </select>
+              </div>
+              <div class="col-auto">
+                <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
+              </div>
+            </div>
+            <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-packets" role="tabpanel">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="row g-3 align-items-end mb-3">
+              <div class="col-sm-6 col-lg-3">
+                <label class="form-label" for="max-packets">最近打印包数</label>
+                <select id="max-packets" class="form-select">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="30">30</option>
+                  <option value="40">40</option>
+                </select>
+              </div>
+              <div class="col-auto">
+                <button id="clear-packets-btn" class="btn btn-outline-secondary">清空视图</button>
+              </div>
+            </div>
+            <pre id="packets-console" class="console form-control bg-dark text-light">等待原始包...</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-config" role="tabpanel">
+        <div class="row g-3">
+          <div class="col-12">
+            <div class="alert alert-light border shadow-sm mb-0">
+              这部分与桌面 GUI 保持同一套配置分组。修改后点击顶部“应用配置”，运行中的接收链路会自动重建。
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="accordion" id="config-accordion">
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#section-processing">
+                    处理参数
+                  </button>
+                </h2>
+                <div id="section-processing" class="accordion-collapse collapse show" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="row g-3">
+                      <div class="col-md-6">
+                        <label class="form-label" for="data1-rate">降采样1 采样率</label>
+                        <input id="data1-rate" class="form-control" type="number" min="0.1" step="0.1">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="data2-rate">降采样2 采样率</label>
+                        <input id="data2-rate" class="form-control" type="number" min="0.1" step="0.1">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-ingest">
+                    数据接入
+                  </button>
+                </h2>
+                <div id="section-ingest" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="row g-3">
+                      <div class="col-md-6">
+                        <label class="form-label" for="data-mode">接入模式</label>
+                        <select id="data-mode" class="form-select">
+                          <option value="client">主动连接设备</option>
+                          <option value="server">监听设备连接</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="frame-header">帧头值</label>
+                        <input id="frame-header" class="form-control" type="text" placeholder="11 或 0x1234">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="listen-host">本地监听地址</label>
+                        <input id="listen-host" class="form-control" type="text" placeholder="0.0.0.0">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="listen-port">本地监听端口</label>
+                        <input id="listen-port" class="form-control" type="number" min="1" max="65535">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="remote-host">设备地址</label>
+                        <input id="remote-host" class="form-control" type="text" placeholder="169.254.56.252">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="remote-port">设备端口</label>
+                        <input id="remote-port" class="form-control" type="number" min="1" max="65535">
+                      </div>
+                      <div class="col-12">
+                        <div id="mode-hint" class="alert alert-secondary py-2 mb-0"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-protocol">
+                    协议解析
+                  </button>
+                </h2>
+                <div id="section-protocol" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="row g-3">
+                      <div class="col-md-6">
+                        <label class="form-label" for="frame-header-size">帧头字节数</label>
+                        <select id="frame-header-size" class="form-select">
+                          <option value="2">2</option>
+                          <option value="4">4</option>
+                          <option value="8">8</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="length-field-size">长度字段字节数</label>
+                        <select id="length-field-size" class="form-select">
+                          <option value="4">4</option>
+                          <option value="8">8</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="length-field-format">长度字段格式</label>
+                        <select id="length-field-format" class="form-select">
+                          <option value="uint">无符号整数</option>
+                          <option value="float64">浮点 float64</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="length-field-units">长度单位</label>
+                        <select id="length-field-units" class="form-select">
+                          <option value="bytes">字节</option>
+                          <option value="values">数值个数</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="byte-order">字节序</label>
+                        <select id="byte-order" class="form-select">
+                          <option value="big">大端</option>
+                          <option value="little">小端</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="channel-layout">通道排列</label>
+                        <select id="channel-layout" class="form-select">
+                          <option value="interleaved">采样交织</option>
+                          <option value="channel-major">按通道连续</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-storage">
+                    本地存储
+                  </button>
+                </h2>
+                <div id="section-storage" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="form-check form-switch mb-3">
+                      <input id="storage-enabled" class="form-check-input" type="checkbox">
+                      <label class="form-check-label" for="storage-enabled">启用本地存储</label>
+                    </div>
+                    <div class="row g-3" id="storage-fields">
+                      <div class="col-12">
+                        <label class="form-label" for="storage-root">存储目录</label>
+                        <input id="storage-root" class="form-control" type="text" placeholder="./var/storage">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="storage-duration">单文件时长(秒)</label>
+                        <input id="storage-duration" class="form-control" type="number" min="1">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="storage-network">网络码</label>
+                        <input id="storage-network" class="form-control" type="text">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="storage-station">台站码</label>
+                        <input id="storage-station" class="form-control" type="text">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="storage-location">位置码</label>
+                        <input id="storage-location" class="form-control" type="text">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-datalink">
+                    DataLink 远传
+                  </button>
+                </h2>
+                <div id="section-datalink" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="form-check form-switch mb-3">
+                      <input id="datalink-enabled" class="form-check-input" type="checkbox">
+                      <label class="form-check-label" for="datalink-enabled">启用 DataLink 远传</label>
+                    </div>
+                    <div class="row g-3" id="datalink-fields">
+                      <div class="col-md-6">
+                        <label class="form-label" for="datalink-host">远传主机</label>
+                        <input id="datalink-host" class="form-control" type="text" placeholder="127.0.0.1">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="datalink-port">远传端口</label>
+                        <input id="datalink-port" class="form-control" type="number" min="1" max="65535">
+                      </div>
+                      <div class="col-md-6">
+                        <div class="form-check mt-4">
+                          <input id="ack-required" class="form-check-input" type="checkbox">
+                          <label class="form-check-label" for="ack-required">发送后等待 ACK</label>
+                        </div>
+                      </div>
+                      <div class="col-md-6">
+                        <div class="form-check mt-4">
+                          <input id="send-data2" class="form-check-input" type="checkbox">
+                          <label class="form-check-label" for="send-data2">同时发送降采样2</label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-capture">
+                    抓包
+                  </button>
+                </h2>
+                <div id="section-capture" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="form-check form-switch mb-3">
+                      <input id="capture-enabled" class="form-check-input" type="checkbox">
+                      <label class="form-check-label" for="capture-enabled">启用原始 TCP 抓包</label>
+                    </div>
+                    <div id="capture-fields">
+                      <label class="form-label" for="capture-path">抓包文件</label>
+                      <input id="capture-path" class="form-control" type="text" placeholder="./var/captures/session.dlhcap">
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-gps">
+                    GPS 时间
+                  </button>
+                </h2>
+                <div id="section-gps" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                  <div class="accordion-body">
+                    <div class="form-check form-switch mb-3">
+                      <input id="gps-enabled" class="form-check-input" type="checkbox">
+                      <label class="form-check-label" for="gps-enabled">启用 GPS 时间</label>
+                    </div>
+                    <div class="row g-3" id="gps-fields">
+                      <div class="col-md-6">
+                        <label class="form-label" for="gps-port">串口</label>
+                        <input id="gps-port" class="form-control" type="text" list="gps-port-options">
+                        <datalist id="gps-port-options"></datalist>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="gps-baudrate">波特率</label>
+                        <input id="gps-baudrate" class="form-control" type="number" min="1">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="gps-mode">模式</label>
+                        <select id="gps-mode" class="form-select">
+                          <option value="debug">调试模式</option>
+                          <option value="deploy">部署模式</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="gps-poll">轮询间隔(秒)</label>
+                        <input id="gps-poll" class="form-control" type="number" min="0.01" step="0.01">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script>
+    const state = {
+      baseUrl: "",
+      connected: false,
+      pollTimer: null,
+      pollInFlight: false,
+      refreshMs: 500,
+      maxPoints: 1024,
+      maxPackets: 20,
+      wavePayload: null,
+      latestStatus: null,
+      lastLogsRefreshAt: 0,
+      packetsClearedAt: 0,
+      waveChart: null,
+      analysisTimeChart: null,
+      analysisPsdChart: null,
+    };
+
+    const els = {
+      apiHost: document.getElementById("api-host"),
+      apiPort: document.getElementById("api-port"),
+      connectBtn: document.getElementById("connect-btn"),
+      useCurrentOriginBtn: document.getElementById("use-current-origin-btn"),
+      reloadConfigBtn: document.getElementById("reload-config-btn"),
+      applyConfigBtn: document.getElementById("apply-config-btn"),
+      startBtn: document.getElementById("start-btn"),
+      stopBtn: document.getElementById("stop-btn"),
+      targetUrl: document.getElementById("target-url"),
+      connectionAlert: document.getElementById("connection-alert"),
+      metricProcessing: document.getElementById("metric-processing"),
+      metricDataConnection: document.getElementById("metric-data-connection"),
+      metricPackets: document.getElementById("metric-packets"),
+      metricBytes: document.getElementById("metric-bytes"),
+      metricRate: document.getElementById("metric-rate"),
+      metricQueue: document.getElementById("metric-queue"),
+      metricDropped: document.getElementById("metric-dropped"),
+      metricStorageQueue: document.getElementById("metric-storage-queue"),
+      metricDatalink: document.getElementById("metric-datalink"),
+      metricDatalinkQueue: document.getElementById("metric-datalink-queue"),
+      metricGps: document.getElementById("metric-gps"),
+      metricGpsTime: document.getElementById("metric-gps-time"),
+      overviewStatusList: document.getElementById("overview-status-list"),
+      overviewLastError: document.getElementById("overview-last-error"),
+      overviewStorageError: document.getElementById("overview-storage-error"),
+      overviewDatalinkError: document.getElementById("overview-datalink-error"),
+      overviewDatalinkPublishError: document.getElementById("overview-datalink-publish-error"),
+      waveMode: document.getElementById("wave-mode"),
+      waveChannel: document.getElementById("wave-channel"),
+      maxPoints: document.getElementById("max-points"),
+      refreshMs: document.getElementById("refresh-ms"),
+      maxPackets: document.getElementById("max-packets"),
+      waveSummary: document.getElementById("wave-summary"),
+      waveMeta: document.getElementById("wave-meta"),
+      analysisChannel: document.getElementById("analysis-channel"),
+      analysisWindow: document.getElementById("analysis-window"),
+      logLevel: document.getElementById("log-level"),
+      refreshLogsBtn: document.getElementById("refresh-logs-btn"),
+      logsConsole: document.getElementById("logs-console"),
+      clearPacketsBtn: document.getElementById("clear-packets-btn"),
+      packetsConsole: document.getElementById("packets-console"),
+      data1Rate: document.getElementById("data1-rate"),
+      data2Rate: document.getElementById("data2-rate"),
+      dataMode: document.getElementById("data-mode"),
+      frameHeader: document.getElementById("frame-header"),
+      listenHost: document.getElementById("listen-host"),
+      listenPort: document.getElementById("listen-port"),
+      remoteHost: document.getElementById("remote-host"),
+      remotePort: document.getElementById("remote-port"),
+      modeHint: document.getElementById("mode-hint"),
+      frameHeaderSize: document.getElementById("frame-header-size"),
+      lengthFieldSize: document.getElementById("length-field-size"),
+      lengthFieldFormat: document.getElementById("length-field-format"),
+      lengthFieldUnits: document.getElementById("length-field-units"),
+      byteOrder: document.getElementById("byte-order"),
+      channelLayout: document.getElementById("channel-layout"),
+      storageEnabled: document.getElementById("storage-enabled"),
+      storageFields: document.getElementById("storage-fields"),
+      storageRoot: document.getElementById("storage-root"),
+      storageDuration: document.getElementById("storage-duration"),
+      storageNetwork: document.getElementById("storage-network"),
+      storageStation: document.getElementById("storage-station"),
+      storageLocation: document.getElementById("storage-location"),
+      datalinkEnabled: document.getElementById("datalink-enabled"),
+      datalinkFields: document.getElementById("datalink-fields"),
+      datalinkHost: document.getElementById("datalink-host"),
+      datalinkPort: document.getElementById("datalink-port"),
+      ackRequired: document.getElementById("ack-required"),
+      sendData2: document.getElementById("send-data2"),
+      captureEnabled: document.getElementById("capture-enabled"),
+      captureFields: document.getElementById("capture-fields"),
+      capturePath: document.getElementById("capture-path"),
+      gpsEnabled: document.getElementById("gps-enabled"),
+      gpsFields: document.getElementById("gps-fields"),
+      gpsPort: document.getElementById("gps-port"),
+      gpsPortOptions: document.getElementById("gps-port-options"),
+      gpsBaudrate: document.getElementById("gps-baudrate"),
+      gpsMode: document.getElementById("gps-mode"),
+      gpsPoll: document.getElementById("gps-poll"),
+    };
+
+    function initCharts() {
+      state.waveChart = createLineChart(document.getElementById("wave-chart"), "#0d6efd");
+      state.analysisTimeChart = createLineChart(document.getElementById("analysis-time-chart"), "#198754");
+      state.analysisPsdChart = createLineChart(document.getElementById("analysis-psd-chart"), "#dc3545", true);
+    }
+
+    function createLineChart(canvas, color, useLogScale = false) {
+      return new Chart(canvas, {
+        type: "line",
+        data: {
+          datasets: [{
+            label: "",
+            data: [],
+            borderColor: color,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            tension: 0,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          parsing: false,
+          normalized: true,
+          scales: {
+            x: {
+              type: "linear",
+              ticks: {
+                maxTicksLimit: 8,
+              },
+            },
+            y: {
+              type: useLogScale ? "logarithmic" : "linear",
+              grace: useLogScale ? 0 : "10%",
+            },
+          },
+          plugins: {
+            legend: {
+              display: false,
+            },
+          },
+        },
+      });
+    }
+
+    function bindEvents() {
+      els.connectBtn.addEventListener("click", connectToRemote);
+      els.useCurrentOriginBtn.addEventListener("click", useCurrentOrigin);
+      els.reloadConfigBtn.addEventListener("click", loadConfigIntoForm);
+      els.applyConfigBtn.addEventListener("click", applyConfig);
+      els.startBtn.addEventListener("click", startProcessing);
+      els.stopBtn.addEventListener("click", stopProcessing);
+      els.refreshLogsBtn.addEventListener("click", () => refreshLogs(true));
+      els.clearPacketsBtn.addEventListener("click", () => {
+        state.packetsClearedAt = Date.now();
+        els.packetsConsole.textContent = "原始包视图已清空，等待下一次刷新...";
+      });
+      els.waveMode.addEventListener("change", refreshMonitor);
+      els.waveChannel.addEventListener("change", renderChartsFromWavePayload);
+      els.analysisChannel.addEventListener("change", renderChartsFromWavePayload);
+      els.analysisWindow.addEventListener("change", renderChartsFromWavePayload);
+      els.maxPoints.addEventListener("change", () => {
+        state.maxPoints = Number(els.maxPoints.value);
+        refreshMonitor();
+      });
+      els.maxPackets.addEventListener("change", () => {
+        state.maxPackets = Number(els.maxPackets.value);
+        refreshMonitor();
+      });
+      els.refreshMs.addEventListener("change", () => {
+        state.refreshMs = Number(els.refreshMs.value);
+        restartPolling();
+      });
+      els.logLevel.addEventListener("change", () => refreshLogs(true));
+      els.dataMode.addEventListener("change", updateFormState);
+      els.storageEnabled.addEventListener("change", updateFormState);
+      els.datalinkEnabled.addEventListener("change", updateFormState);
+      els.captureEnabled.addEventListener("change", updateFormState);
+      els.gpsEnabled.addEventListener("change", updateFormState);
+    }
+
+    function formatNumber(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return "-";
+      }
+      return new Intl.NumberFormat("zh-CN").format(numeric);
+    }
+
+    function formatRate(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return "-";
+      }
+      return numeric >= 100 ? `${numeric.toFixed(0)} Hz` : `${numeric.toFixed(2)} Hz`;
+    }
+
+    function setAlert(message, tone = "secondary") {
+      els.connectionAlert.className = `alert alert-${tone} py-2 px-3 mb-0 flex-grow-1`;
+      els.connectionAlert.textContent = message;
+    }
+
+    function setTargetUrl(url) {
+      els.targetUrl.textContent = url || "未连接";
+    }
+
+    function updateButtons() {
+      const enabled = state.connected;
+      els.reloadConfigBtn.disabled = !enabled;
+      els.applyConfigBtn.disabled = !enabled;
+      els.startBtn.disabled = !enabled || (state.latestStatus && state.latestStatus.processing_active);
+      els.stopBtn.disabled = !enabled || !(state.latestStatus && state.latestStatus.processing_active);
+    }
+
+    function buildBaseUrl() {
+      const host = els.apiHost.value.trim();
+      const port = els.apiPort.value.trim();
+      if (!host) {
+        throw new Error("API 地址不能为空");
+      }
+      if (!port) {
+        throw new Error("端口不能为空");
+      }
+      return `http://${host}:${port}`;
+    }
+
+    function saveConnectionPreset() {
+      localStorage.setItem("datalink-host-api-host", els.apiHost.value.trim());
+      localStorage.setItem("datalink-host-api-port", els.apiPort.value.trim());
+    }
+
+    function loadConnectionPreset() {
+      const storedHost = localStorage.getItem("datalink-host-api-host");
+      const storedPort = localStorage.getItem("datalink-host-api-port");
+      const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
+      els.apiHost.value = storedHost || (hasHttpOrigin ? window.location.hostname : "127.0.0.1");
+      els.apiPort.value = storedPort || (window.location.port || "18080");
+      if (hasHttpOrigin) {
+        setTargetUrl(window.location.origin);
+      }
+    }
+
+    async function apiRequest(path, options = {}) {
+      if (!state.baseUrl) {
+        throw new Error("还没有连接远程 API");
+      }
+      const response = await fetch(`${state.baseUrl}${path}`, {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        ...options,
+      });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (error) {
+        throw new Error("远程服务返回了无法解析的响应");
+      }
+      if (!response.ok || !data || data.status !== "ok") {
+        const message = data && (data.detail || data.message) ? (data.detail || data.message) : "远程请求失败";
+        throw new Error(message);
+      }
+      return data.payload;
+    }
+
+    function readNumber(input, fieldName) {
+      const value = input.value.trim();
+      if (!value) {
+        throw new Error(`${fieldName}不能为空`);
+      }
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        throw new Error(`${fieldName}格式不正确`);
+      }
+      return numeric;
+    }
+
+    function updateFormState() {
+      const clientMode = els.dataMode.value === "client";
+      els.listenHost.disabled = clientMode;
+      els.listenPort.disabled = clientMode;
+      els.remoteHost.disabled = !clientMode;
+      els.remotePort.disabled = !clientMode;
+      els.modeHint.textContent = clientMode
+        ? "当前为主动连接设备模式：系统会主动连接“设备地址/设备端口”，监听地址只作为保留配置。"
+        : "当前为监听设备连接模式：系统会在“本地监听地址/端口”等待设备主动接入。";
+
+      toggleFieldGroup(els.storageFields, els.storageEnabled.checked);
+      toggleFieldGroup(els.datalinkFields, els.datalinkEnabled.checked);
+      toggleFieldGroup(els.captureFields, els.captureEnabled.checked);
+      toggleFieldGroup(els.gpsFields, els.gpsEnabled.checked);
+    }
+
+    function toggleFieldGroup(container, enabled) {
+      Array.from(container.querySelectorAll("input, select, textarea, button")).forEach((node) => {
+        node.disabled = !enabled;
+      });
+      container.classList.toggle("opacity-50", !enabled);
+    }
+
+    function applyConfigToForm(config) {
+      const processing = config.processing || {};
+      const dataServer = config.data_server || {};
+      const protocol = config.protocol || {};
+      const storage = config.storage || {};
+      const datalink = config.datalink || {};
+      const capture = config.capture || {};
+      const gps = config.gps || {};
+
+      els.data1Rate.value = processing.data1_rate ?? 100;
+      els.data2Rate.value = processing.data2_rate ?? 10;
+      els.dataMode.value = dataServer.mode || "client";
+      els.frameHeader.value = protocol.frame_header ?? "";
+      els.listenHost.value = dataServer.host || "";
+      els.listenPort.value = dataServer.port ?? "";
+      els.remoteHost.value = dataServer.remote_host || "";
+      els.remotePort.value = dataServer.remote_port ?? "";
+      els.frameHeaderSize.value = String(protocol.frame_header_size ?? 2);
+      els.lengthFieldSize.value = String(protocol.length_field_size ?? 8);
+      els.lengthFieldFormat.value = protocol.length_field_format || "float64";
+      els.lengthFieldUnits.value = protocol.length_field_units || "values";
+      els.byteOrder.value = protocol.byte_order || "big";
+      els.channelLayout.value = protocol.channel_layout || "interleaved";
+      els.storageEnabled.checked = Boolean(storage.enabled);
+      els.storageRoot.value = storage.root || "";
+      els.storageDuration.value = storage.file_duration_seconds ?? 3600;
+      els.storageNetwork.value = storage.network || "SC";
+      els.storageStation.value = storage.station || "S0001";
+      els.storageLocation.value = storage.location || "10";
+      els.datalinkEnabled.checked = Boolean(datalink.enabled);
+      els.datalinkHost.value = datalink.host || "";
+      els.datalinkPort.value = datalink.port ?? "";
+      els.ackRequired.checked = Boolean(datalink.ack_required);
+      els.sendData2.checked = Boolean(datalink.send_data2);
+      els.captureEnabled.checked = Boolean(capture.enabled);
+      els.capturePath.value = capture.path || "";
+      els.gpsEnabled.checked = Boolean(gps.enabled);
+      els.gpsPort.value = gps.port || "";
+      els.gpsBaudrate.value = gps.baudrate ?? 115200;
+      els.gpsMode.value = gps.mode || "debug";
+      els.gpsPoll.value = gps.poll_interval_seconds ?? 0.1;
+      updateFormState();
+    }
+
+    async function refreshGpsPorts() {
+      if (!state.baseUrl) {
+        return;
+      }
+      try {
+        const ports = await apiRequest("/api/gps/ports");
+        els.gpsPortOptions.innerHTML = "";
+        ports.forEach((port) => {
+          const option = document.createElement("option");
+          option.value = port;
+          els.gpsPortOptions.appendChild(option);
+        });
+      } catch (error) {
+        console.warn("Failed to refresh GPS ports", error);
+      }
+    }
+
+    async function loadConfigIntoForm() {
+      if (!state.baseUrl) {
+        return;
+      }
+      const config = await apiRequest("/api/config");
+      applyConfigToForm(config);
+      await refreshGpsPorts();
+      setAlert("配置已从远程服务同步到当前页面。", "info");
+    }
+
+    function collectConfigPayload() {
+      return {
+        processing: {
+          data1_rate: readNumber(els.data1Rate, "降采样1 采样率"),
+          data2_rate: readNumber(els.data2Rate, "降采样2 采样率"),
+        },
+        data_server: {
+          mode: els.dataMode.value,
+          host: els.listenHost.value.trim() || "0.0.0.0",
+          port: readNumber(els.listenPort, "本地监听端口"),
+          remote_host: els.remoteHost.value.trim() || "169.254.56.252",
+          remote_port: readNumber(els.remotePort, "设备端口"),
+        },
+        protocol: {
+          frame_header: els.frameHeader.value.trim() || "11",
+          frame_header_size: readNumber(els.frameHeaderSize, "帧头字节数"),
+          length_field_size: readNumber(els.lengthFieldSize, "长度字段字节数"),
+          length_field_format: els.lengthFieldFormat.value,
+          length_field_units: els.lengthFieldUnits.value,
+          byte_order: els.byteOrder.value,
+          channel_layout: els.channelLayout.value,
+        },
+        storage: {
+          enabled: els.storageEnabled.checked,
+          root: els.storageRoot.value.trim() || "./var/storage",
+          file_duration_seconds: readNumber(els.storageDuration, "单文件时长"),
+          network: els.storageNetwork.value.trim() || "SC",
+          station: els.storageStation.value.trim() || "S0001",
+          location: els.storageLocation.value.trim() || "10",
+        },
+        datalink: {
+          enabled: els.datalinkEnabled.checked,
+          host: els.datalinkHost.value.trim() || "127.0.0.1",
+          port: readNumber(els.datalinkPort, "远传端口"),
+          ack_required: els.ackRequired.checked,
+          send_data2: els.sendData2.checked,
+        },
+        capture: {
+          enabled: els.captureEnabled.checked,
+          path: els.capturePath.value.trim() || "./var/captures/session.dlhcap",
+        },
+        gps: {
+          enabled: els.gpsEnabled.checked,
+          port: els.gpsPort.value.trim(),
+          baudrate: readNumber(els.gpsBaudrate, "GPS 波特率"),
+          mode: els.gpsMode.value,
+          poll_interval_seconds: readNumber(els.gpsPoll, "GPS 轮询间隔"),
+        },
+      };
+    }
+
+    async function applyConfig() {
+      if (!state.connected) {
+        return;
+      }
+      try {
+        await apiRequest("/api/config", {
+          method: "POST",
+          body: JSON.stringify(collectConfigPayload()),
+        });
+        setAlert("配置已应用到远程服务。", "success");
+        await loadConfigIntoForm();
+        await refreshMonitor();
+      } catch (error) {
+        setAlert(`应用配置失败: ${error.message}`, "danger");
+      }
+    }
+
+    async function startProcessing() {
+      if (!state.connected) {
+        return;
+      }
+      try {
+        await apiRequest("/api/processing/start", { method: "POST" });
+        setAlert("已请求远程服务启动接收。", "success");
+        await refreshMonitor();
+      } catch (error) {
+        setAlert(`启动失败: ${error.message}`, "danger");
+      }
+    }
+
+    async function stopProcessing() {
+      if (!state.connected) {
+        return;
+      }
+      try {
+        await apiRequest("/api/processing/stop", { method: "POST" });
+        setAlert("已请求远程服务停止接收。", "warning");
+        await refreshMonitor();
+      } catch (error) {
+        setAlert(`停止失败: ${error.message}`, "danger");
+      }
+    }
+
+    function setConnected(connected, message, tone) {
+      state.connected = connected;
+      setAlert(message, tone);
+      updateButtons();
+      if (!connected) {
+        stopPolling();
+      }
+    }
+
+    async function connectToRemote() {
+      try {
+        state.baseUrl = buildBaseUrl();
+      } catch (error) {
+        setAlert(error.message, "danger");
+        return;
+      }
+      saveConnectionPreset();
+      setTargetUrl(state.baseUrl);
+      setAlert("正在连接远程 API...", "secondary");
+      try {
+        await loadConfigIntoForm();
+        await refreshMonitor(true);
+        await refreshLogs(true);
+        setConnected(true, "远程 API 连接成功，已开始轮询。", "success");
+        restartPolling();
+      } catch (error) {
+        setConnected(false, `连接失败: ${error.message}`, "danger");
+      }
+    }
+
+    function useCurrentOrigin() {
+      const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
+      if (!hasHttpOrigin || !window.location.hostname || !window.location.port) {
+        setAlert("当前页面不是通过带端口的 HTTP 地址打开，无法直接复用当前地址。", "warning");
+        return;
+      }
+      els.apiHost.value = window.location.hostname;
+      els.apiPort.value = window.location.port;
+      connectToRemote();
+    }
+
+    function restartPolling() {
+      stopPolling();
+      if (!state.connected) {
+        return;
+      }
+      state.pollTimer = window.setInterval(() => {
+        refreshMonitor();
+      }, state.refreshMs);
+    }
+
+    function stopPolling() {
+      if (state.pollTimer) {
+        window.clearInterval(state.pollTimer);
+        state.pollTimer = null;
+      }
+    }
+
+    async function refreshMonitor(force = false) {
+      if ((!state.connected && !force) || state.pollInFlight || !state.baseUrl) {
+        return;
+      }
+      state.pollInFlight = true;
+      try {
+        const payload = await apiRequest(
+          `/api/monitor?mode=${encodeURIComponent(els.waveMode.value)}&max_points=${state.maxPoints}&max_packets=${state.maxPackets}`
+        );
+        const status = payload.status || {};
+        state.latestStatus = status;
+        state.wavePayload = payload;
+        updateStatus(status);
+        renderWavePayload(payload);
+        const shouldRefreshLogs = Date.now() - state.lastLogsRefreshAt >= Math.max(2000, state.refreshMs * 2);
+        if (shouldRefreshLogs) {
+          await refreshLogs();
+        }
+        updateButtons();
+      } catch (error) {
+        setConnected(false, `监控刷新失败: ${error.message}`, "danger");
+      } finally {
+        state.pollInFlight = false;
+      }
+    }
+
+    async function refreshLogs(force = false) {
+      if (!state.baseUrl) {
+        return;
+      }
+      if (!force && Date.now() - state.lastLogsRefreshAt < 1000) {
+        return;
+      }
+      try {
+        const payload = await apiRequest(
+          `/api/logs?limit=300&level=${encodeURIComponent(els.logLevel.value)}`
+        );
+        els.logsConsole.textContent = payload.lines && payload.lines.length
+          ? payload.lines.join("\n")
+          : "暂无日志。";
+        state.lastLogsRefreshAt = Date.now();
+      } catch (error) {
+        els.logsConsole.textContent = `日志刷新失败: ${error.message}`;
+      }
+    }
+
+    function updateStatus(status) {
+      const processingActive = Boolean(status.processing_active);
+      els.metricProcessing.textContent = processingActive ? "运行中" : "已停止";
+      els.metricDataConnection.textContent = status.data_connected ? "数据连接 已建立" : "数据连接 未建立";
+      els.metricPackets.textContent = formatNumber(status.packets_received);
+      els.metricBytes.textContent = formatNumber(status.bytes_received);
+      els.metricRate.textContent = formatRate(status.source_sample_rate);
+      els.metricQueue.textContent = formatNumber(status.queue_depth);
+      els.metricDropped.textContent = formatNumber(status.frames_dropped);
+      els.metricStorageQueue.textContent = formatNumber(status.storage_queue_depth);
+      els.metricDatalink.textContent = status.datalink_connected ? "已连接" : (status.datalink_enabled ? "未连接" : "未启用");
+      els.metricDatalinkQueue.textContent = formatNumber(status.datalink_publish_queue_depth);
+      els.metricGps.textContent = status.gps_connected ? "已连接" : (status.gps_enabled ? "未连接" : "未启用");
+      els.metricGpsTime.textContent = `时间 ${status.gps_last_timestamp || "-"}`;
+
+      renderOverviewStatus(status);
+      els.overviewLastError.textContent = status.last_error || "-";
+      els.overviewStorageError.textContent = status.storage_last_error || "-";
+      els.overviewDatalinkError.textContent = status.datalink_last_error || "-";
+      els.overviewDatalinkPublishError.textContent = status.datalink_publish_last_error || "-";
+    }
+
+    function renderOverviewStatus(status) {
+      const rows = [
+        ["控制连接", status.control_connected ? "已连接" : "未连接"],
+        ["降采样1 采样率", formatRate(status.data1_rate)],
+        ["降采样2 采样率", formatRate(status.data2_rate)],
+        ["本地存储", status.storage_enabled ? "已启用" : "未启用"],
+        ["存储丢帧", formatNumber(status.storage_frames_dropped)],
+        ["远传开关", status.datalink_enabled ? "已启用" : "未启用"],
+        ["远传重连次数", formatNumber(status.datalink_reconnects)],
+        ["远传发布丢帧", formatNumber(status.datalink_publish_frames_dropped)],
+        ["抓包", status.capture_enabled ? "已启用" : "未启用"],
+        ["GPS 模式", status.gps_mode || "-"],
+        ["GPS 串口", status.gps_port || "-"],
+        ["GPS 回退", status.gps_fallback_active ? "是" : "否"],
+      ];
+      els.overviewStatusList.innerHTML = rows.map(([label, value]) => (
+        `<div class="list-group-item d-flex justify-content-between align-items-center">
+          <span class="text-secondary">${label}</span>
+          <span class="fw-semibold">${value}</span>
+        </div>`
+      )).join("");
+    }
+
+    function renderWavePayload(payload) {
+      const waveform = payload.waveform || null;
+      state.wavePayload = payload;
+      populateChannelOptions(payload.channel_codes || [], waveform ? waveform.channels : 0);
+      renderChartsFromWavePayload();
+      renderPackets(payload.recent_packets || []);
+    }
+
+    function populateChannelOptions(channelCodes, channelCount) {
+      const count = Number(channelCount) || channelCodes.length || 0;
+      const previousWave = els.waveChannel.value;
+      const previousAnalysis = els.analysisChannel.value;
+      const options = [];
+      for (let index = 0; index < count; index += 1) {
+        const label = channelCodes[index] ? `${index + 1} / ${channelCodes[index]}` : String(index + 1);
+        options.push(`<option value="${index}">${label}</option>`);
+      }
+      const html = options.join("");
+      els.waveChannel.innerHTML = html;
+      els.analysisChannel.innerHTML = html;
+      if (count > 0) {
+        els.waveChannel.value = previousWave && Number(previousWave) < count ? previousWave : "0";
+        els.analysisChannel.value = previousAnalysis && Number(previousAnalysis) < count ? previousAnalysis : "0";
+      }
+    }
+
+    function renderChartsFromWavePayload() {
+      const payload = state.wavePayload;
+      if (!payload || !payload.waveform) {
+        updateChart(state.waveChart, [], "等待数据");
+        updateChart(state.analysisTimeChart, [], "等待数据");
+        updateChart(state.analysisPsdChart, [], "等待数据");
+        els.waveSummary.textContent = "等待波形数据...";
+        els.waveMeta.textContent = "-";
+        return;
+      }
+
+      const waveform = payload.waveform;
+      const selectedWaveChannel = Number(els.waveChannel.value || "0");
+      const selectedAnalysisChannel = Number(els.analysisChannel.value || "0");
+      const waveSeries = Array.isArray(waveform.series[selectedWaveChannel]) ? waveform.series[selectedWaveChannel] : [];
+      const analysisSeries = Array.isArray(waveform.series[selectedAnalysisChannel]) ? waveform.series[selectedAnalysisChannel] : [];
+      const sampleRate = Number(waveform.sample_rate) || 0;
+
+      updateChart(
+        state.waveChart,
+        waveSeries.map((value, index) => ({ x: index, y: value })),
+        `CH ${selectedWaveChannel + 1}`
+      );
+      els.waveSummary.textContent = waveSeries.length
+        ? `当前显示 ${waveSeries.length} 个点，来源 ${waveform.mode}。`
+        : "当前模式下还没有可绘制的点。";
+      els.waveMeta.textContent = `sampleRate ${formatRate(sampleRate)} / channels ${waveform.channels} / updated ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
+
+      const analysisWindow = Math.min(Number(els.analysisWindow.value || "1024"), analysisSeries.length);
+      const windowed = analysisSeries.slice(Math.max(analysisSeries.length - analysisWindow, 0));
+      updateChart(
+        state.analysisTimeChart,
+        windowed.map((value, index) => ({ x: index, y: value })),
+        `CH ${selectedAnalysisChannel + 1}`
+      );
+      const { freqs, psd } = computePsd(windowed, sampleRate);
+      updateChart(
+        state.analysisPsdChart,
+        freqs.map((value, index) => ({ x: value, y: Math.max(psd[index], 1e-18) })),
+        `PSD CH ${selectedAnalysisChannel + 1}`
+      );
+    }
+
+    function updateChart(chart, data, label) {
+      chart.data.datasets[0].label = label;
+      chart.data.datasets[0].data = data;
+      chart.update("none");
+    }
+
+    function computePsd(values, sampleRate) {
+      const samples = Array.isArray(values) ? values.slice() : [];
+      if (samples.length < 2 || !Number.isFinite(sampleRate) || sampleRate <= 0) {
+        return { freqs: [], psd: [] };
+      }
+      const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+      const centered = samples.map((value) => value - mean);
+      const half = Math.floor(centered.length / 2);
+      const freqs = [];
+      const psd = [];
+      for (let k = 1; k <= half; k += 1) {
+        let re = 0;
+        let im = 0;
+        for (let t = 0; t < centered.length; t += 1) {
+          const angle = -2 * Math.PI * k * t / centered.length;
+          re += centered[t] * Math.cos(angle);
+          im += centered[t] * Math.sin(angle);
+        }
+        freqs.push(k * sampleRate / centered.length);
+        psd.push((re * re + im * im) / Math.max(centered.length * sampleRate, 1e-9));
+      }
+      return { freqs, psd };
+    }
+
+    function renderPackets(packets) {
+      if (Date.now() - state.packetsClearedAt < state.refreshMs) {
+        return;
+      }
+      if (!Array.isArray(packets) || packets.length === 0) {
+        els.packetsConsole.textContent = "暂无原始包。";
+        return;
+      }
+      els.packetsConsole.textContent = packets.map((packet, index) => {
+        const lines = [
+          `#${index + 1}`,
+          `received_at: ${new Date((packet.received_at || 0) * 1000).toLocaleString("zh-CN", { hour12: false })}`,
+          `sample_rate: ${packet.sample_rate}`,
+          `payload_bytes: ${packet.payload_bytes}`,
+          `raw_bytes: ${packet.raw_bytes}`,
+          packet.truncated_bytes ? `truncated_bytes: ${packet.truncated_bytes}` : "truncated_bytes: 0",
+          "",
+          packet.hex_dump || "<empty>",
+        ];
+        return lines.join("\n");
+      }).join("\n\n" + "-".repeat(96) + "\n\n");
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      initCharts();
+      bindEvents();
+      loadConnectionPreset();
+      state.refreshMs = Number(els.refreshMs.value);
+      state.maxPoints = Number(els.maxPoints.value);
+      state.maxPackets = Number(els.maxPackets.value);
+      updateFormState();
+      const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
+      if (hasHttpOrigin && window.location.port) {
+        els.apiHost.value = window.location.hostname;
+        els.apiPort.value = window.location.port;
+        await connectToRemote();
+      }
+    });
+  </script>
+</body>
+</html>
