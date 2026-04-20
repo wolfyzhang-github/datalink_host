@@ -27,6 +27,7 @@ SEND_PACKET_WARNING_MS = 200.0
 DEFAULT_DATALINK_PACKET_SIZE = 512
 MIN_MSEED_RECORD_LENGTH = 256
 MAX_MSEED_RECORD_LENGTH = 4096
+MAX_MSEED_SEQUENCE_NUMBER = 999999
 PACKETSIZE_PATTERN = re.compile(r"PACKETSIZE(?:\s*[:=]\s*|\s+)(\d+)")
 
 
@@ -62,6 +63,8 @@ class DataLinkPublisher:
         self._storage_settings = deepcopy(storage_settings)
         self._socket: socket.socket | None = None
         self._lock = threading.Lock()
+        self._mseed_sequence_lock = threading.Lock()
+        self._next_mseed_sequence_number = 1
         self._stats = DataLinkStats()
         self._warned_group_suffix = False
         self._server_packet_size_bytes: int | None = None
@@ -253,6 +256,7 @@ class DataLinkPublisher:
         )
         end_time = start_time + (values.size / max(sample_rate, 1e-9))
         if len(payload) <= max_payload_bytes:
+            payload = self._assign_mseed_sequence_numbers(payload, record_length_bytes)
             return [(payload, start_time, end_time)]
         if values.size <= 1:
             raise DataLinkSendError(
@@ -290,6 +294,34 @@ class DataLinkPublisher:
         while record_length * 2 <= capped_limit:
             record_length *= 2
         return record_length
+
+    @staticmethod
+    def _count_mseed_records(payload: bytes, record_length_bytes: int) -> int:
+        if len(payload) % record_length_bytes != 0:
+            raise RuntimeError(
+                "MiniSEED payload size does not align with record length: "
+                f"payload_bytes={len(payload)}, record_length_bytes={record_length_bytes}"
+            )
+        return len(payload) // record_length_bytes
+
+    def _assign_mseed_sequence_numbers(self, payload: bytes, record_length_bytes: int) -> bytes:
+        record_count = self._count_mseed_records(payload, record_length_bytes)
+        with self._mseed_sequence_lock:
+            sequence_number = self._next_mseed_sequence_number
+            self._next_mseed_sequence_number = self._advance_mseed_sequence_number(
+                sequence_number,
+                record_count,
+            )
+        numbered_payload = bytearray(payload)
+        for record_index in range(record_count):
+            record_sequence_number = self._advance_mseed_sequence_number(sequence_number, record_index)
+            record_offset = record_index * record_length_bytes
+            numbered_payload[record_offset : record_offset + 6] = f"{record_sequence_number:06d}".encode("ascii")
+        return bytes(numbered_payload)
+
+    @staticmethod
+    def _advance_mseed_sequence_number(sequence_number: int, record_count: int) -> int:
+        return ((sequence_number - 1 + record_count) % MAX_MSEED_SEQUENCE_NUMBER) + 1
 
     def _stream_id_for(
         self,

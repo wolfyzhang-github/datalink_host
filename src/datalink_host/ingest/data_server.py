@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import socket
 import threading
 import time
@@ -40,6 +41,9 @@ class TcpDataServer:
         self._socket_lock = threading.Lock()
         self._server_socket: socket.socket | None = None
         self._connection_socket: socket.socket | None = None
+        self._last_valid_sample_rate: float | None = None
+        self._sample_rate_fallback_active = False
+        self._warned_missing_sample_rate_fallback = False
 
     def start(self) -> None:
         if self._thread is not None:
@@ -222,14 +226,21 @@ class TcpDataServer:
                                 decoder.pending_bytes(),
                                 decoder.header_size(),
                             )
-                    if packets and packets_decoded == 0:
+                    accepted_packets: list[TcpPacket] = []
+                    for packet in packets:
+                        sample_rate = self._normalize_sample_rate(packet.sample_rate, peer_label)
+                        if sample_rate is None:
+                            continue
+                        packet.sample_rate = sample_rate
+                        accepted_packets.append(packet)
+                    if accepted_packets and packets_decoded == 0:
                         LOGGER.info(
                             "Decoded first packet from %s: sample_rate=%.3f Hz, payload_bytes=%s",
                             peer_label,
-                            packets[0].sample_rate,
-                            packets[0].payload_bytes,
+                            accepted_packets[0].sample_rate,
+                            accepted_packets[0].payload_bytes,
                         )
-                    packets_decoded += len(packets)
+                    packets_decoded += len(accepted_packets)
                     if packets_decoded == 0 and time.monotonic() >= next_no_packet_warning_at:
                         self._log_decode_wait_state(
                             decoder=decoder,
@@ -238,7 +249,7 @@ class TcpDataServer:
                             peer_label=peer_label,
                         )
                         next_no_packet_warning_at = time.monotonic() + NO_PACKET_WARNING_INTERVAL_SECONDS
-                    for packet in packets:
+                    for packet in accepted_packets:
                         self._on_packet(packet)
                         self._on_frame(packet_to_frame(packet, self._protocol_settings))
                 except Exception as exc:  # noqa: BLE001
@@ -266,6 +277,42 @@ class TcpDataServer:
         if isinstance(peer, tuple) and len(peer) >= 2:
             return f"{peer[0]}:{peer[1]}"
         return str(peer)
+
+    def _normalize_sample_rate(self, sample_rate: float, peer_label: str) -> float | None:
+        if math.isfinite(sample_rate) and sample_rate > 0:
+            if self._sample_rate_fallback_active:
+                LOGGER.info(
+                    "Recovered valid source sample rate from %s: %.3f Hz; leaving sample-rate fallback mode",
+                    peer_label,
+                    sample_rate,
+                )
+            self._last_valid_sample_rate = sample_rate
+            self._sample_rate_fallback_active = False
+            self._warned_missing_sample_rate_fallback = False
+            return sample_rate
+
+        fallback_rate = self._last_valid_sample_rate
+        if fallback_rate is None:
+            if not self._warned_missing_sample_rate_fallback:
+                LOGGER.warning(
+                    "Dropping packet from %s because decoded sample_rate=%r is invalid and no previous valid "
+                    "sample rate is available",
+                    peer_label,
+                    sample_rate,
+                )
+                self._warned_missing_sample_rate_fallback = True
+            return None
+
+        if not self._sample_rate_fallback_active:
+            LOGGER.warning(
+                "Decoded invalid sample_rate=%r from %s; reusing last valid sample_rate=%.3f Hz until a valid "
+                "rate arrives",
+                sample_rate,
+                peer_label,
+                fallback_rate,
+            )
+            self._sample_rate_fallback_active = True
+        return fallback_rate
 
     def _log_decode_wait_state(
         self,

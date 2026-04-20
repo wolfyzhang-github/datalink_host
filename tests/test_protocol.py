@@ -197,6 +197,40 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(1, len(frames))
         self.assertTrue(np.array_equal(channels, frames[0]))
 
+    def test_data_server_reuses_last_valid_sample_rate_after_reconnect_when_peer_reports_zero(self) -> None:
+        protocol = ProtocolSettings()
+        channels = np.arange(80, dtype=np.float64).reshape(8, 10)
+        valid_packet = build_packet(1000.0, channels, protocol)
+        zero_rate_packet = build_packet(0.0, channels, protocol)
+        frame_rates: list[float] = []
+        packet_rates: list[float] = []
+        states: list[bool] = []
+        errors: list[str] = []
+        server = TcpDataServer(
+            DataServerSettings(mode="client", remote_host="169.254.56.252", remote_port=3677),
+            protocol,
+            on_packet=lambda packet: packet_rates.append(packet.sample_rate),
+            on_frame=lambda frame: frame_rates.append(frame.sample_rate),
+            on_connection_state=states.append,
+            on_bytes_received=lambda count: None,
+            on_error=errors.append,
+        )
+
+        first_conn = Mock()
+        first_conn.getpeername.return_value = ("169.254.56.252", 3677)
+        first_conn.recv.side_effect = [valid_packet, b""]
+        second_conn = Mock()
+        second_conn.getpeername.return_value = ("169.254.56.252", 3677)
+        second_conn.recv.side_effect = [zero_rate_packet, b""]
+
+        server._handle_connection(first_conn, manage_socket=False)
+        server._handle_connection(second_conn, manage_socket=False)
+
+        self.assertFalse(errors)
+        self.assertEqual([True, False, True, False], states)
+        self.assertEqual([1000.0, 1000.0], packet_rates)
+        self.assertEqual([1000.0, 1000.0], frame_rates)
+
     def test_runtime_restart_data_server_respects_processing_state(self) -> None:
         runtime = RuntimeService(AppSettings())
         running_server = Mock()
@@ -500,6 +534,62 @@ class ProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(1_699_999_999.5, packets[0][3], places=6)
         self.assertAlmostEqual(1_699_999_999.5, packets[1][2], places=6)
         self.assertAlmostEqual(1_700_000_000.0, packets[1][3], places=6)
+        publisher.close()
+
+    def test_datalink_miniseed_sequence_numbers_increment_across_packets(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(100, dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_000_000_000,
+            max_payload_bytes=256,
+        )
+        self.assertEqual(["000001", "000002"], [payload[:6].decode("ascii") for payload, *_ in packets])
+
+        next_packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(10, dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_001_000_000,
+            max_payload_bytes=256,
+        )
+        self.assertEqual("000003", next_packets[0][0][:6].decode("ascii"))
+        publisher.close()
+
+    def test_datalink_miniseed_sequence_numbers_advance_by_record_count(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        raw_first_payload = publisher._encode_miniseed_record(  # type: ignore[attr-defined]
+            channel_index=0,
+            values=np.ones(10_000, dtype=np.float32),
+            sample_rate=100.0,
+            start_time=1_700_000_000.0,
+            storage_settings=StorageSettings(),
+            record_length_bytes=4096,
+        )
+        first_payload = publisher._assign_mseed_sequence_numbers(raw_first_payload, 4096)  # type: ignore[attr-defined]
+        self.assertEqual("000001", first_payload[:6].decode("ascii"))
+        self.assertEqual("000002", first_payload[4096:4102].decode("ascii"))
+
+        raw_second_payload = publisher._encode_miniseed_record(  # type: ignore[attr-defined]
+            channel_index=0,
+            values=np.ones(100, dtype=np.float32),
+            sample_rate=100.0,
+            start_time=1_700_000_100.0,
+            storage_settings=StorageSettings(),
+            record_length_bytes=4096,
+        )
+        second_payload = publisher._assign_mseed_sequence_numbers(raw_second_payload, 4096)  # type: ignore[attr-defined]
+        record_count = len(first_payload) // 4096
+        self.assertEqual(f"{record_count + 1:06d}", second_payload[:6].decode("ascii"))
         publisher.close()
 
     def test_datalink_send_data2_uses_distinct_stream_suffix_without_group_placeholder(self) -> None:
