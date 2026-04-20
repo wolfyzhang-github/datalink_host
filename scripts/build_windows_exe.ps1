@@ -1,5 +1,6 @@
 param(
     [switch]$Clean,
+    [switch]$OneFile,
     [switch]$SkipTests,
     [switch]$SkipSmokeTest
 )
@@ -62,11 +63,25 @@ $VenvPath = Join-Path $ProjectRoot ".venv"
 $PythonInVenv = Join-Path $VenvPath "Scripts\python.exe"
 $PipInVenv = Join-Path $VenvPath "Scripts\pip.exe"
 $PyInstallerInVenv = Join-Path $VenvPath "Scripts\pyinstaller.exe"
+$SpecPath = Join-Path $ProjectRoot "datalink-host-gui.spec"
 $ExeOutputPath = Join-Path $ProjectRoot "dist\datalink-host-gui\datalink-host-gui.exe"
 $SmokeReportPath = Join-Path $ProjectRoot "dist\datalink-host-gui\smoke-report.json"
 
+if ($OneFile) {
+    $SpecPath = Join-Path $ProjectRoot "datalink-host-gui-onefile.spec"
+    $ExeOutputPath = Join-Path $ProjectRoot "dist\datalink-host-gui.exe"
+    $SmokeReportPath = Join-Path $ProjectRoot "dist\datalink-host-gui-smoke-report.json"
+}
+
 Write-Step "Project root"
 Write-Host $ProjectRoot
+
+Write-Step "Build mode"
+if ($OneFile) {
+    Write-Host "onefile"
+} else {
+    Write-Host "onedir"
+}
 
 if (-not (Test-Path -LiteralPath $PythonInVenv)) {
     Write-Step "Creating virtual environment"
@@ -94,7 +109,7 @@ if ($Clean) {
 }
 
 Write-Step "Building Windows executable"
-& $PyInstallerInVenv --noconfirm --clean .\datalink-host-gui.spec
+& $PyInstallerInVenv --noconfirm --clean $SpecPath
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed with exit code $LASTEXITCODE."
 }
