@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 import socket
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -29,7 +30,7 @@ from datalink_host.models.messages import ChannelFrame, ProcessedFrame, TcpPacke
 from datalink_host.processing.pipeline import ProcessingPipeline, compute_psd
 from datalink_host.services.gps_time import GpsStatus, format_timestamp_us, gps_timestamp_to_us
 from datalink_host.services.runtime import RuntimeService
-from datalink_host.services.web_api import create_app
+from datalink_host.services.web_api import WebApiService, create_app
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher, DataLinkSendError, PendingDataLinkPacket
 
@@ -1009,6 +1010,39 @@ class ProtocolTests(unittest.TestCase):
         logging.getLogger("test.logger").warning("buffer-check")
         logs = get_recent_logs(20)
         self.assertTrue(any("buffer-check" in line for line in logs))
+
+    def test_configure_logging_handles_missing_stderr(self) -> None:
+        with patch.object(sys, "stderr", None):
+            configure_logging()
+            import logging
+
+            logging.getLogger("test.logger").warning("no-stderr-check")
+            logs = get_recent_logs(20)
+            self.assertTrue(any("no-stderr-check" in line for line in logs))
+
+    def test_web_api_service_uses_existing_logging_configuration(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        settings = AppSettings().web
+        service = WebApiService(runtime, settings)
+        fake_server = Mock()
+
+        with patch("datalink_host.services.web_api.uvicorn.Config") as config_cls, patch(
+            "datalink_host.services.web_api.uvicorn.Server",
+            return_value=fake_server,
+        ), patch("datalink_host.services.web_api.threading.Thread") as thread_cls:
+            fake_thread = Mock()
+            thread_cls.return_value = fake_thread
+
+            service.start()
+
+            self.assertTrue(config_cls.called)
+            self.assertIsNone(config_cls.call_args.kwargs["log_config"])
+            fake_thread.start.assert_called_once()
+
+            service.stop()
+            fake_thread.join.assert_called_once()
+
+        runtime._datalink.close()
 
 
 if __name__ == "__main__":

@@ -148,6 +148,7 @@ class WebApiService:
             app,
             host=self._settings.host,
             port=self._settings.port,
+            log_config=None,
             log_level="info",
             access_log=False,
         )

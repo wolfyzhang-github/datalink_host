@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import logging
 from pathlib import Path
+import sys
 import threading
 
 
@@ -26,11 +27,18 @@ def get_recent_logs(limit: int = 200) -> list[str]:
         return list(_LOG_BUFFER)[-limit:]
 
 
+def _can_use_console_stream() -> bool:
+    stream = sys.stderr
+    return stream is not None and hasattr(stream, "write")
+
+
 def configure_logging(log_path: Path | None = None) -> None:
     memory_handler = InMemoryLogHandler()
     memory_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 
-    handlers: list[logging.Handler] = [logging.StreamHandler(), memory_handler]
+    handlers: list[logging.Handler] = [memory_handler]
+    if _can_use_console_stream():
+        handlers.insert(0, logging.StreamHandler())
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
