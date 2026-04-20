@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from PySide6 import QtWidgets
 
 from datalink_host.core.config import AppSettings
+from datalink_host.core.frozen import patch_obspy_version_path_for_frozen
 from datalink_host.core.logging import configure_logging
-from datalink_host.gui.main_window import MainWindow
-from datalink_host.services.runtime import RuntimeService
-from datalink_host.services.web_api import WebApiService
-from datalink_host.tools.receiver_sim import FakeDataLinkReceiver, ReceiverSettings
-from datalink_host.tools.sender_sim import SenderSettings, SyntheticSender
+from datalink_host.core.paths import (
+    default_capture_path,
+    default_datalink_dump_root,
+    default_storage_root,
+    ensure_runtime_dirs,
+    log_file_path,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,7 +28,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
-    configure_logging(Path("./var/logs/datalink-host.log"))
+    patch_obspy_version_path_for_frozen()
+
+    from datalink_host.gui.main_window import MainWindow
+    from datalink_host.services.runtime import RuntimeService
+    from datalink_host.services.web_api import WebApiService
+    from datalink_host.tools.receiver_sim import FakeDataLinkReceiver, ReceiverSettings
+    from datalink_host.tools.sender_sim import SenderSettings, SyntheticSender
+
+    ensure_runtime_dirs()
+    configure_logging(log_file_path())
 
     settings = AppSettings()
     settings.data_server.mode = "server"
@@ -35,9 +46,9 @@ def main() -> int:
     settings.data_server.remote_port = settings.data_server.port
     settings.control_server.host = "127.0.0.1"
     settings.storage.enabled = True
-    settings.storage.root = Path("./var/storage")
+    settings.storage.root = default_storage_root()
     settings.capture.enabled = True
-    settings.capture.path = Path("./var/captures/session.dlhcap")
+    settings.capture.path = default_capture_path()
     settings.datalink.enabled = not args.no_datalink_receiver
     settings.datalink.host = "127.0.0.1"
     settings.datalink.port = 16000
@@ -53,7 +64,7 @@ def main() -> int:
             ReceiverSettings(
                 host="127.0.0.1",
                 port=settings.datalink.port,
-                output_dir=Path("./var/datalink-dumps"),
+                output_dir=default_datalink_dump_root(),
             )
         )
         receiver.start()

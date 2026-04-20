@@ -1,5 +1,7 @@
 param(
-    [switch]$Clean
+    [switch]$Clean,
+    [switch]$SkipTests,
+    [switch]$SkipSmokeTest
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +62,8 @@ $VenvPath = Join-Path $ProjectRoot ".venv"
 $PythonInVenv = Join-Path $VenvPath "Scripts\python.exe"
 $PipInVenv = Join-Path $VenvPath "Scripts\pip.exe"
 $PyInstallerInVenv = Join-Path $VenvPath "Scripts\pyinstaller.exe"
+$ExeOutputPath = Join-Path $ProjectRoot "dist\datalink-host-gui\datalink-host-gui.exe"
+$SmokeReportPath = Join-Path $ProjectRoot "dist\datalink-host-gui\smoke-report.json"
 
 Write-Step "Project root"
 Write-Host $ProjectRoot
@@ -69,11 +73,19 @@ if (-not (Test-Path -LiteralPath $PythonInVenv)) {
     Invoke-CommandArray -Command $PythonCmd -Arguments @("-m", "venv", $VenvPath)
 }
 
-Write-Step "Upgrading pip"
-& $PythonInVenv -m pip install --upgrade pip
+Write-Step "Upgrading packaging tools"
+& $PythonInVenv -m pip install --upgrade pip setuptools wheel
 
 Write-Step "Installing application and build dependencies"
-& $PipInVenv install -e '.[build]'
+& $PipInVenv install --no-build-isolation -e '.[build]'
+
+if (-not $SkipTests) {
+    Write-Step "Running packaging preflight tests"
+    & $PythonInVenv -m unittest tests.test_packaging tests.test_protocol.ProtocolTests.test_datalink_payload_uses_float32_miniseed_encoding
+    if ($LASTEXITCODE -ne 0) {
+        throw "Preflight tests failed with exit code $LASTEXITCODE."
+    }
+}
 
 if ($Clean) {
     Write-Step "Cleaning previous build output"
@@ -87,6 +99,20 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed with exit code $LASTEXITCODE."
 }
 
+if (-not (Test-Path -LiteralPath $ExeOutputPath)) {
+    throw "Expected executable was not found at $ExeOutputPath."
+}
+
+if (-not $SkipSmokeTest) {
+    Write-Step "Running frozen executable smoke test"
+    & $ExeOutputPath --self-check --self-check-output $SmokeReportPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Frozen smoke test failed with exit code $LASTEXITCODE. See $SmokeReportPath."
+    }
+    Write-Host "Smoke report created at:"
+    Write-Host "  $SmokeReportPath"
+}
+
 Write-Step "Done"
 Write-Host "Executable created at:"
-Write-Host "  .\dist\datalink-host-gui\datalink-host-gui.exe"
+Write-Host "  $ExeOutputPath"

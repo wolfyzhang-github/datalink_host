@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from datalink_host.core.paths import default_capture_path, default_storage_root
+
 
 @dataclass(slots=True)
 class ProtocolSettings:
@@ -46,7 +48,7 @@ class ProcessingSettings:
 @dataclass(slots=True)
 class StorageSettings:
     enabled: bool = False
-    root: Path = Path("./var/storage")
+    root: Path = field(default_factory=default_storage_root)
     file_duration_seconds: int = 3600
     network: str = "SC"
     station: str = "S0001"
@@ -103,7 +105,7 @@ class GuiSettings:
 @dataclass(slots=True)
 class CaptureSettings:
     enabled: bool = False
-    path: Path = Path("./var/captures/session.dlhcap")
+    path: Path = field(default_factory=default_capture_path)
 
 
 @dataclass(slots=True)

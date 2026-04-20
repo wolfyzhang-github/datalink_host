@@ -81,11 +81,11 @@ if (-not (Test-Path -LiteralPath $PythonInVenv)) {
     Write-Step "Virtual environment already exists"
 }
 
-Write-Step "Upgrading pip"
-& $PythonInVenv -m pip install --upgrade pip
+Write-Step "Upgrading packaging tools"
+& $PythonInVenv -m pip install --upgrade pip setuptools wheel
 
 Write-Step "Installing project dependencies"
-& $PipInVenv install -e .
+& $PipInVenv install --no-build-isolation -e .
 
 Write-Step "Creating runtime directories"
 Ensure-Directory (Join-Path $ProjectRoot "var")
