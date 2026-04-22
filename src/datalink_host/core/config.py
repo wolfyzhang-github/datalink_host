@@ -85,6 +85,7 @@ class GpsSettings:
     baudrate: int = 115200
     mode: str = "debug"
     poll_interval_seconds: float = 0.1
+    timestamp_interval_seconds: float = 0.1
     serial_timeout_seconds: float = 0.1
     command: str = "timestamp"
 

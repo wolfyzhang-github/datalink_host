@@ -935,7 +935,7 @@ class ProtocolTests(unittest.TestCase):
         snapshot = runtime.snapshot()
 
         self.assertEqual("20231114221320000000", snapshot.gps_last_timestamp)
-        self.assertEqual(1_700_000_000_500_000, frame.timestamp_us)
+        self.assertEqual(1_700_000_000_000_000, frame.timestamp_us)
 
     def test_runtime_uses_previous_frame_timestamp_when_gps_is_unavailable(self) -> None:
         runtime = RuntimeService(AppSettings())
@@ -966,6 +966,86 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(1_700_000_001_000_000, timestamp_us)
         self.assertTrue(used_fallback)
         self.assertIn("gps offline", error or "")
+        runtime._datalink.close()
+
+    def test_runtime_aligns_frame_timestamps_to_configured_100ms_gps_cadence(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gps = GpsSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=0.1,
+        )
+        runtime._gps_timestamp_anchor_us = 1_700_000_000_000_000
+        runtime._last_frame_start_us = 1_700_000_000_100_000
+        runtime._last_frame_duration_us = 100_000
+        runtime._gps_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GpsStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=1_700_000_000_200_000,
+                last_error=None,
+            )
+        )
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 100), dtype=np.float32),
+            received_at=1_700_000_000.243,
+        )
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_000_200_000, timestamp_us)
+        self.assertFalse(used_fallback)
+        self.assertIsNone(error)
+        runtime._datalink.close()
+
+    def test_runtime_aligns_frame_timestamps_to_configured_200ms_gps_cadence(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gps = GpsSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=0.2,
+        )
+        runtime._gps_timestamp_anchor_us = 1_700_000_000_000_000
+        runtime._last_frame_start_us = 1_700_000_000_200_000
+        runtime._last_frame_duration_us = 200_000
+        runtime._gps_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GpsStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.2,
+                last_timestamp_us=1_700_000_000_400_000,
+                last_error=None,
+            )
+        )
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 200), dtype=np.float32),
+            received_at=1_700_000_000.590,
+        )
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_000_400_000, timestamp_us)
+        self.assertFalse(used_fallback)
+        self.assertIsNone(error)
+        runtime._datalink.close()
+
+    def test_runtime_exposes_manual_gps_timestamp_interval_in_config(self) -> None:
+        runtime = RuntimeService(AppSettings())
+
+        runtime.update_config({"gps": {"timestamp_interval_seconds": 0.2}})
+
+        self.assertEqual(0.2, runtime.current_config()["gps"]["timestamp_interval_seconds"])
         runtime._datalink.close()
 
     def test_web_api_exposes_runtime_status_and_ports(self) -> None:

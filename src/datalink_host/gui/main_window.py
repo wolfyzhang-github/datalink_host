@@ -155,6 +155,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gps_baudrate_spin: QtWidgets.QSpinBox | None = None
         self._gps_mode_combo: QtWidgets.QComboBox | None = None
         self._gps_poll_spin: QtWidgets.QDoubleSpinBox | None = None
+        self._gps_timestamp_interval_spin: QtWidgets.QDoubleSpinBox | None = None
 
         self._analysis_channel_spin: QtWidgets.QSpinBox | None = None
         self._analysis_window_spin: QtWidgets.QSpinBox | None = None
@@ -784,11 +785,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gps_poll_spin = QtWidgets.QDoubleSpinBox(card)
         self._gps_poll_spin.setRange(0.01, 10.0)
         self._gps_poll_spin.setDecimals(2)
+        self._gps_timestamp_interval_spin = QtWidgets.QDoubleSpinBox(card)
+        self._gps_timestamp_interval_spin.setRange(0.001, 10.0)
+        self._gps_timestamp_interval_spin.setDecimals(3)
 
         form.addRow("串口", port_widget)
         form.addRow("波特率", self._gps_baudrate_spin)
         form.addRow("模式", self._gps_mode_combo)
         form.addRow("轮询间隔(秒)", self._gps_poll_spin)
+        form.addRow("授时间隔(秒)", self._gps_timestamp_interval_spin)
         layout.addLayout(form)
 
         runtime_form = QtWidgets.QFormLayout()
@@ -955,6 +960,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._gps_baudrate_spin is not None
         assert self._gps_mode_combo is not None
         assert self._gps_poll_spin is not None
+        assert self._gps_timestamp_interval_spin is not None
 
         processing = config["processing"]
         data_server = config["data_server"]
@@ -1006,6 +1012,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gps_baudrate_spin.setValue(gps["baudrate"])
         self._gps_mode_combo.setCurrentIndex(0 if gps["mode"] == "debug" else 1)
         self._gps_poll_spin.setValue(gps["poll_interval_seconds"])
+        self._gps_timestamp_interval_spin.setValue(gps["timestamp_interval_seconds"])
         self._refresh_gps_ports(selected=gps["port"])
         self._update_form_state()
         self._sync_mode_selectors()
@@ -1126,6 +1133,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._gps_baudrate_spin,
                 self._gps_mode_combo,
                 self._gps_poll_spin,
+                self._gps_timestamp_interval_spin,
             ],
         )
         self._update_processing_controls()
@@ -1170,6 +1178,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._gps_baudrate_spin is not None
         assert self._gps_mode_combo is not None
         assert self._gps_poll_spin is not None
+        assert self._gps_timestamp_interval_spin is not None
 
         payload = {
             "processing": {
@@ -1219,6 +1228,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "baudrate": self._gps_baudrate_spin.value(),
                 "mode": self._gps_mode_combo.currentData(),
                 "poll_interval_seconds": self._gps_poll_spin.value(),
+                "timestamp_interval_seconds": self._gps_timestamp_interval_spin.value(),
             },
         }
         try:

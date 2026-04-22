@@ -25,7 +25,7 @@ from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame, RuntimeSnapshot, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline
 from datalink_host.services.background_sink import BackgroundFrameSink
-from datalink_host.services.gps_time import GpsTimeService, format_timestamp_us
+from datalink_host.services.gps_time import GpsStatus, GpsTimeService, format_timestamp_us
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher
 
@@ -132,6 +132,7 @@ class RuntimeService:
         self._frames_processed = 0
         self._last_frame_start_us: int | None = None
         self._last_frame_duration_us: int | None = None
+        self._gps_timestamp_anchor_us: int | None = None
         self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
 
     def _build_data_server(self) -> TcpDataServer:
@@ -290,6 +291,7 @@ class RuntimeService:
                     "baudrate": self._settings.gps.baudrate,
                     "mode": self._settings.gps.mode,
                     "poll_interval_seconds": self._settings.gps.poll_interval_seconds,
+                    "timestamp_interval_seconds": self._settings.gps.timestamp_interval_seconds,
                 },
                 "capture": {
                     "enabled": self._settings.capture.enabled,
@@ -509,21 +511,46 @@ class RuntimeService:
                 self._datalink.update_settings(self._settings.datalink, self._settings.storage)
 
             if gps:
+                gps_settings_changed = False
                 if "enabled" in gps:
-                    self._settings.gps.enabled = bool(gps["enabled"])
+                    enabled = bool(gps["enabled"])
+                    gps_settings_changed = gps_settings_changed or enabled != self._settings.gps.enabled
+                    self._settings.gps.enabled = enabled
                 if "port" in gps:
-                    self._settings.gps.port = str(gps["port"])
+                    port = str(gps["port"])
+                    gps_settings_changed = gps_settings_changed or port != self._settings.gps.port
+                    self._settings.gps.port = port
                 if "baudrate" in gps:
-                    self._settings.gps.baudrate = parse_positive_int(gps["baudrate"], "gps.baudrate")
+                    baudrate = parse_positive_int(gps["baudrate"], "gps.baudrate")
+                    gps_settings_changed = gps_settings_changed or baudrate != self._settings.gps.baudrate
+                    self._settings.gps.baudrate = baudrate
                 if "mode" in gps:
                     mode = parse_choice(gps["mode"], "gps.mode", GPS_MODES)
+                    gps_settings_changed = gps_settings_changed or mode != self._settings.gps.mode
                     self._settings.gps.mode = mode
                 if "poll_interval_seconds" in gps:
-                    self._settings.gps.poll_interval_seconds = parse_positive_float(
+                    poll_interval_seconds = parse_positive_float(
                         gps["poll_interval_seconds"],
                         "gps.poll_interval_seconds",
                     )
+                    gps_settings_changed = (
+                        gps_settings_changed
+                        or poll_interval_seconds != self._settings.gps.poll_interval_seconds
+                    )
+                    self._settings.gps.poll_interval_seconds = poll_interval_seconds
+                if "timestamp_interval_seconds" in gps:
+                    timestamp_interval_seconds = parse_positive_float(
+                        gps["timestamp_interval_seconds"],
+                        "gps.timestamp_interval_seconds",
+                    )
+                    gps_settings_changed = (
+                        gps_settings_changed
+                        or timestamp_interval_seconds != self._settings.gps.timestamp_interval_seconds
+                    )
+                    self._settings.gps.timestamp_interval_seconds = timestamp_interval_seconds
                 self._gps_time.update_settings(deepcopy(self._settings.gps))
+                if gps_settings_changed:
+                    self._gps_timestamp_anchor_us = None
                 self._snapshot.gps_enabled = self._settings.gps.enabled
                 self._snapshot.gps_mode = self._settings.gps.mode
                 self._snapshot.gps_port = self._settings.gps.port
@@ -611,14 +638,25 @@ class RuntimeService:
         if not self._settings.gps.enabled:
             return int(round(frame.received_at * 1_000_000)), False, None
 
-        gps_now_us = self._gps_time.current_time_us()
         gps_status = self._gps_time.status()
-        if gps_now_us is not None:
-            return gps_now_us, False, None
-
         with self._lock:
             last_frame_start_us = self._last_frame_start_us
             last_frame_duration_us = self._last_frame_duration_us
+            gps_timestamp_anchor_us = self._gps_timestamp_anchor_us
+        aligned_gps_timestamp_us = self._resolve_gps_aligned_timestamp(
+            gps_status=gps_status,
+            last_frame_start_us=last_frame_start_us,
+            last_frame_duration_us=last_frame_duration_us,
+            gps_timestamp_anchor_us=gps_timestamp_anchor_us,
+            timestamp_interval_seconds=self._settings.gps.timestamp_interval_seconds,
+        )
+        if aligned_gps_timestamp_us is not None:
+            if gps_status.last_timestamp_us is not None and gps_timestamp_anchor_us is None:
+                with self._lock:
+                    if self._gps_timestamp_anchor_us is None:
+                        self._gps_timestamp_anchor_us = gps_status.last_timestamp_us
+            return aligned_gps_timestamp_us, False, None
+
         if last_frame_start_us is not None and last_frame_duration_us is not None:
             return (
                 last_frame_start_us + last_frame_duration_us,
@@ -634,6 +672,39 @@ class RuntimeService:
             return None
         sample_count = frame.channels.shape[1]
         return int(round((sample_count / frame.sample_rate) * 1_000_000))
+
+    @staticmethod
+    def _resolve_gps_aligned_timestamp(
+        *,
+        gps_status: GpsStatus,
+        last_frame_start_us: int | None,
+        last_frame_duration_us: int | None,
+        gps_timestamp_anchor_us: int | None,
+        timestamp_interval_seconds: float,
+    ) -> int | None:
+        if gps_status.last_timestamp_us is None:
+            return None
+        if last_frame_start_us is None or last_frame_duration_us is None:
+            return gps_status.last_timestamp_us
+        interval_us = max(int(round(timestamp_interval_seconds * 1_000_000)), 1)
+        cadence_anchor_us = gps_timestamp_anchor_us or gps_status.last_timestamp_us
+        expected_next_us = last_frame_start_us + last_frame_duration_us
+        snapped_next_us = RuntimeService._snap_timestamp_to_cadence(
+            timestamp_us=expected_next_us,
+            cadence_anchor_us=cadence_anchor_us,
+            interval_us=interval_us,
+        )
+        if snapped_next_us <= last_frame_start_us:
+            snapped_next_us = expected_next_us
+        return snapped_next_us
+
+    @staticmethod
+    def _snap_timestamp_to_cadence(*, timestamp_us: int, cadence_anchor_us: int, interval_us: int) -> int:
+        if interval_us <= 0:
+            return timestamp_us
+        offset_us = timestamp_us - cadence_anchor_us
+        steps = int(round(offset_us / interval_us))
+        return cadence_anchor_us + (steps * interval_us)
 
     def _run_processor(self) -> None:
         while not self._stop_event.is_set():

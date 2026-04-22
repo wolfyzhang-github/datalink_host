@@ -598,6 +598,10 @@
                         <label class="form-label" for="gps-poll">轮询间隔(秒)</label>
                         <input id="gps-poll" class="form-control" type="number" min="0.01" step="0.01">
                       </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="gps-timestamp-interval">授时间隔(秒)</label>
+                        <input id="gps-timestamp-interval" class="form-control" type="number" min="0.001" step="0.001">
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -710,6 +714,7 @@
       gpsBaudrate: document.getElementById("gps-baudrate"),
       gpsMode: document.getElementById("gps-mode"),
       gpsPoll: document.getElementById("gps-poll"),
+      gpsTimestampInterval: document.getElementById("gps-timestamp-interval"),
     };
 
     function initCharts() {
@@ -954,6 +959,7 @@
       els.gpsBaudrate.value = gps.baudrate ?? 115200;
       els.gpsMode.value = gps.mode || "debug";
       els.gpsPoll.value = gps.poll_interval_seconds ?? 0.1;
+      els.gpsTimestampInterval.value = gps.timestamp_interval_seconds ?? 0.1;
       updateFormState();
     }
 
@@ -1031,6 +1037,7 @@
           baudrate: readNumber(els.gpsBaudrate, "GPS 波特率"),
           mode: els.gpsMode.value,
           poll_interval_seconds: readNumber(els.gpsPoll, "GPS 轮询间隔"),
+          timestamp_interval_seconds: readNumber(els.gpsTimestampInterval, "GPS 授时间隔"),
         },
       };
     }
