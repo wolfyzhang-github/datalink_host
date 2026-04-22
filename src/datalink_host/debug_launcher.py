@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-sender", action="store_true")
     parser.add_argument("--no-datalink-receiver", action="store_true")
     parser.add_argument("--sample-rate", type=float, default=1000.0)
+    parser.add_argument("--packet-samples", type=int, default=None)
     parser.add_argument("--packet-seconds", type=float, default=1.0)
     return parser
 
@@ -34,7 +35,7 @@ def main() -> int:
     from datalink_host.services.runtime import RuntimeService
     from datalink_host.services.web_api import WebApiService
     from datalink_host.tools.receiver_sim import FakeDataLinkReceiver, ReceiverSettings
-    from datalink_host.tools.sender_sim import SenderSettings, SyntheticSender
+    from datalink_host.tools.sender_sim import SenderSettings, SyntheticSender, resolve_packet_samples
 
     ensure_runtime_dirs()
     configure_logging(log_file_path())
@@ -78,7 +79,7 @@ def main() -> int:
                 host="127.0.0.1",
                 port=settings.data_server.port,
                 sample_rate=args.sample_rate,
-                packet_seconds=args.packet_seconds,
+                packet_samples=resolve_packet_samples(args.sample_rate, args.packet_samples, args.packet_seconds),
                 channels=settings.protocol.channels,
                 protocol=settings.protocol,
             )

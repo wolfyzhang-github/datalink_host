@@ -32,10 +32,21 @@ from datalink_host.services.gps_time import GpsStatus, GpsTimeService, format_ti
 from datalink_host.services.runtime import RuntimeService
 from datalink_host.services.web_api import WebApiService, create_app
 from datalink_host.storage.miniseed import MiniSeedWriter
+from datalink_host.tools.sender_sim import _generate_channels, resolve_packet_samples
 from datalink_host.transport.datalink import DataLinkPublisher, DataLinkSendError, PendingDataLinkPacket
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_sender_sim_uses_fixed_packet_sample_count(self) -> None:
+        channels = _generate_channels(8, 1000.0, 128, 0.0)
+
+        self.assertEqual((8, 128), channels.shape)
+
+    def test_sender_sim_resolves_packet_samples_from_count_or_duration(self) -> None:
+        self.assertEqual(128, resolve_packet_samples(1000.0, 128, 1.0))
+        self.assertEqual(250, resolve_packet_samples(1000.0, None, 0.25))
+        self.assertEqual(1000, resolve_packet_samples(1000.0, None, None))
+
     def test_round_trip_interleaved_packet(self) -> None:
         settings = ProtocolSettings(
             frame_header=0x12345678,

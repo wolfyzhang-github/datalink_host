@@ -23,7 +23,7 @@ class SenderSettings:
     host: str = "127.0.0.1"
     port: int = 3677
     sample_rate: float = 1000.0
-    packet_seconds: float = 1.0
+    packet_samples: int = 1000
     channels: int = 8
     reconnect_interval_seconds: float = 1.0
     protocol: ProtocolSettings = field(default_factory=ProtocolSettings)
@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3677)
     parser.add_argument("--sample-rate", type=float, default=1000.0)
+    parser.add_argument("--packet-samples", type=int, default=None)
     parser.add_argument("--packet-seconds", type=float, default=1.0)
     parser.add_argument("--channels", type=int, default=8)
     parser.add_argument("--frame-header", default="11")
@@ -46,8 +47,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _generate_channels(channel_count: int, sample_rate: float, packet_seconds: float, phase: float) -> np.ndarray:
-    sample_count = max(int(sample_rate * packet_seconds), 1)
+def resolve_packet_samples(
+    sample_rate: float,
+    packet_samples: int | None,
+    packet_seconds: float | None,
+) -> int:
+    if packet_samples is not None:
+        if packet_samples <= 0:
+            raise ValueError("packet_samples must be positive")
+        return packet_samples
+    if packet_seconds is not None:
+        if packet_seconds <= 0:
+            raise ValueError("packet_seconds must be positive")
+        return max(int(round(sample_rate * packet_seconds)), 1)
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    return max(int(round(sample_rate)), 1)
+
+
+def _generate_channels(channel_count: int, sample_rate: float, sample_count: int, phase: float) -> np.ndarray:
     t = np.arange(sample_count, dtype=np.float64) / sample_rate
     channels = []
     for index in range(channel_count):
@@ -60,6 +78,10 @@ def _generate_channels(channel_count: int, sample_rate: float, packet_seconds: f
 
 class SyntheticSender:
     def __init__(self, settings: SenderSettings) -> None:
+        if settings.sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        if settings.packet_samples <= 0:
+            raise ValueError("packet_samples must be positive")
         self._settings = settings
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -79,22 +101,30 @@ class SyntheticSender:
     def _run(self) -> None:
         protocol = self._settings.protocol
         phase = 0.0
+        packet_interval_seconds = self._settings.packet_samples / self._settings.sample_rate
         while not self._stop_event.is_set():
             try:
                 LOGGER.info("Connecting to %s:%s", self._settings.host, self._settings.port)
                 with socket.create_connection((self._settings.host, self._settings.port), timeout=5.0) as sock:
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    next_send_at = time.monotonic()
                     while not self._stop_event.is_set():
+                        wait_seconds = max(next_send_at - time.monotonic(), 0.0)
+                        if wait_seconds > 0 and self._stop_event.wait(wait_seconds):
+                            break
                         channels = _generate_channels(
                             self._settings.channels,
                             self._settings.sample_rate,
-                            self._settings.packet_seconds,
+                            self._settings.packet_samples,
                             phase,
                         )
                         packet = build_packet(self._settings.sample_rate, channels, protocol)
                         sock.sendall(packet)
                         phase += 0.25
-                        time.sleep(self._settings.packet_seconds)
+                        next_send_at += packet_interval_seconds
+                        now = time.monotonic()
+                        if next_send_at < now - packet_interval_seconds:
+                            next_send_at = now
             except OSError as exc:
                 LOGGER.warning("Synthetic sender connection issue: %s", exc)
                 if self._stop_event.wait(self._settings.reconnect_interval_seconds):
@@ -109,7 +139,7 @@ def main() -> int:
             host=args.host,
             port=args.port,
             sample_rate=args.sample_rate,
-            packet_seconds=args.packet_seconds,
+            packet_samples=resolve_packet_samples(args.sample_rate, args.packet_samples, args.packet_seconds),
             channels=args.channels,
             protocol=ProtocolSettings(
                 frame_header=int(str(args.frame_header), 0),
