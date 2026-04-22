@@ -224,8 +224,8 @@
                 <label class="form-label" for="max-points">最大点数</label>
                 <select id="max-points" class="form-select">
                   <option value="512">512</option>
-                  <option value="1024" selected>1024</option>
-                  <option value="2048">2048</option>
+                  <option value="1024">1024</option>
+                  <option value="2048" selected>2048</option>
                   <option value="4096">4096</option>
                 </select>
               </div>
@@ -262,8 +262,8 @@
                 <select id="analysis-window" class="form-select">
                   <option value="256">256</option>
                   <option value="512">512</option>
-                  <option value="1024" selected>1024</option>
-                  <option value="2048">2048</option>
+                  <option value="1024">1024</option>
+                  <option value="2048" selected>2048</option>
                 </select>
               </div>
             </div>
@@ -619,7 +619,7 @@
       pollTimer: null,
       pollInFlight: false,
       refreshMs: 500,
-      maxPoints: 1024,
+      maxPoints: 2048,
       maxPackets: 20,
       wavePayload: null,
       latestStatus: null,
@@ -1281,7 +1281,7 @@
         : "当前模式下还没有可绘制的点。";
       els.waveMeta.textContent = `sampleRate ${formatRate(sampleRate)} / channels ${waveform.channels} / updated ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
 
-      const analysisWindow = Math.min(Number(els.analysisWindow.value || "1024"), analysisSeries.length);
+      const analysisWindow = Math.min(Number(els.analysisWindow.value || "2048"), analysisSeries.length);
       const windowed = analysisSeries.slice(Math.max(analysisSeries.length - analysisWindow, 0));
       updateChart(
         state.analysisTimeChart,

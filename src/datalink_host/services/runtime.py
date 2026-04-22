@@ -198,6 +198,7 @@ class RuntimeService:
             return
         self._data_server.stop()
         self._data_server_active = False
+        self._pipeline.reset()
         while True:
             try:
                 self._queue.get_nowait()
@@ -295,7 +296,7 @@ class RuntimeService:
                 },
             }
 
-    def monitor_view(self, mode: str = "raw", *, max_points: int = 1200, max_packets: int = 20) -> dict[str, Any]:
+    def monitor_view(self, mode: str = "raw", *, max_points: int = 2048, max_packets: int = 20) -> dict[str, Any]:
         snapshot = self.snapshot()
         data, sample_rate = self._series_for_monitor(snapshot, mode=mode, max_points=max_points)
         with self._lock:
@@ -383,6 +384,7 @@ class RuntimeService:
 
             if "enable_phase_unwrap" in processing:
                 self._settings.processing.enable_phase_unwrap = bool(processing["enable_phase_unwrap"])
+                self._pipeline.reset()
 
             if protocol:
                 protocol_changed = False
@@ -705,6 +707,8 @@ class RuntimeService:
         return storage_enqueue_ms, datalink_publish_enqueue_ms
 
     def _set_data_connected(self, connected: bool) -> None:
+        if not connected:
+            self._pipeline.reset()
         with self._lock:
             self._snapshot.data_connected = connected
             self._snapshot.updated_at = time.time()

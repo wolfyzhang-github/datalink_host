@@ -88,7 +88,7 @@ def create_app(runtime: RuntimeService) -> FastAPI:
     @app.get("/api/monitor")
     async def monitor(
         mode: str = Query(default="raw"),
-        max_points: int = Query(default=1200, ge=128, le=4096),
+        max_points: int = Query(default=2048, ge=128, le=4096),
         max_packets: int = Query(default=20, ge=1, le=40),
     ) -> dict[str, Any]:
         payload = runtime.monitor_view(mode=mode, max_points=max_points, max_packets=max_packets)

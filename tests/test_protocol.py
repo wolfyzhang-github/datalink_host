@@ -442,6 +442,29 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(10.0, first.data2_sample_rate)
         self.assertEqual(10.0, second.data2_sample_rate)
 
+    def test_processing_pipeline_unwraps_across_frame_boundaries(self) -> None:
+        pipeline = ProcessingPipeline(AppSettings().processing)
+        first_channels = np.repeat(np.array([[2.5, 3.0, -2.8]], dtype=np.float64), 8, axis=0)
+        second_channels = np.repeat(np.array([[-2.3, -1.8]], dtype=np.float64), 8, axis=0)
+
+        first = pipeline.process(ChannelFrame(sample_rate=100.0, channels=first_channels, received_at=1.0))
+        second = pipeline.process(ChannelFrame(sample_rate=100.0, channels=second_channels, received_at=2.0))
+
+        stitched = np.concatenate([first.unwrapped[0], second.unwrapped[0]])
+        expected = np.unwrap(np.concatenate([first_channels[0], second_channels[0]]))
+        self.assertTrue(np.allclose(expected, stitched))
+
+    def test_processing_pipeline_reset_clears_unwrap_state(self) -> None:
+        pipeline = ProcessingPipeline(AppSettings().processing)
+        first_channels = np.repeat(np.array([[2.5, 3.0, -2.8]], dtype=np.float64), 8, axis=0)
+        second_channels = np.repeat(np.array([[-2.3, -1.8]], dtype=np.float64), 8, axis=0)
+
+        pipeline.process(ChannelFrame(sample_rate=100.0, channels=first_channels, received_at=1.0))
+        pipeline.reset()
+        second = pipeline.process(ChannelFrame(sample_rate=100.0, channels=second_channels, received_at=2.0))
+
+        self.assertTrue(np.array_equal(second.unwrapped[0], second_channels[0]))
+
     def test_miniseed_writer_rotates_output_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             writer = MiniSeedWriter(
@@ -925,6 +948,16 @@ class ProtocolTests(unittest.TestCase):
             stop_response = client.post("/api/processing/stop")
             self.assertEqual(200, stop_response.status_code)
             runtime.pause_processing.assert_called_once()
+
+        runtime._datalink.close()
+
+    def test_web_api_rejects_monitor_requests_over_4096_points(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        app = create_app(runtime)
+
+        with TestClient(app) as client:
+            response = client.get("/api/monitor?mode=raw&max_points=4097&max_packets=5")
+            self.assertEqual(422, response.status_code)
 
         runtime._datalink.close()
 

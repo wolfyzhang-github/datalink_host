@@ -42,6 +42,7 @@ class ProcessingPipeline:
         self._settings = settings
         self._data1 = AverageDownsampler(settings.data1_rate)
         self._data2 = AverageDownsampler(settings.data2_rate)
+        self._unwrap_last_samples: np.ndarray | None = None
 
     def update_rates(self, data1_rate: float, data2_rate: float) -> None:
         self._settings.data1_rate = data1_rate
@@ -49,9 +50,18 @@ class ProcessingPipeline:
         self._data1 = AverageDownsampler(data1_rate)
         self._data2 = AverageDownsampler(data2_rate)
 
+    def reset(self) -> None:
+        self._data1 = AverageDownsampler(self._settings.data1_rate)
+        self._data2 = AverageDownsampler(self._settings.data2_rate)
+        self._unwrap_last_samples = None
+
     def process(self, frame: ChannelFrame) -> ProcessedFrame:
         raw = frame.channels
-        unwrapped = np.unwrap(raw, axis=1) if self._settings.enable_phase_unwrap else raw.copy()
+        if self._settings.enable_phase_unwrap:
+            unwrapped = self._unwrap_channels(raw)
+        else:
+            self._unwrap_last_samples = None
+            unwrapped = raw.copy()
         data1 = self._data1.process(unwrapped, frame.sample_rate)
         data2 = self._data2.process(unwrapped, frame.sample_rate)
         return ProcessedFrame(
@@ -65,6 +75,17 @@ class ProcessingPipeline:
             received_at=frame.received_at,
             timestamp_us=frame.timestamp_us,
         )
+
+    def _unwrap_channels(self, channels: np.ndarray) -> np.ndarray:
+        if channels.size == 0:
+            return channels.copy()
+        if self._unwrap_last_samples is None or self._unwrap_last_samples.shape[0] != channels.shape[0]:
+            unwrapped = np.unwrap(channels, axis=1)
+        else:
+            stitched = np.concatenate([self._unwrap_last_samples[:, np.newaxis], channels], axis=1)
+            unwrapped = np.unwrap(stitched, axis=1)[:, 1:]
+        self._unwrap_last_samples = unwrapped[:, -1].copy()
+        return unwrapped
 
 
 def compute_psd(signal: np.ndarray, sample_rate: float) -> tuple[np.ndarray, np.ndarray]:

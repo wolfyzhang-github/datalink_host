@@ -99,7 +99,7 @@ class WebSettings:
 @dataclass(slots=True)
 class GuiSettings:
     refresh_interval_ms: int = 250
-    max_points_per_trace: int = 4000
+    max_points_per_trace: int = 4096
 
 
 @dataclass(slots=True)

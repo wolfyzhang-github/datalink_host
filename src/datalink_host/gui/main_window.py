@@ -351,7 +351,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._analysis_window_spin = QtWidgets.QSpinBox(sidebar)
         self._analysis_window_spin.setRange(16, self._settings.gui.max_points_per_trace)
         self._analysis_window_spin.setSingleStep(128)
-        self._analysis_window_spin.setValue(min(1024, self._settings.gui.max_points_per_trace))
+        self._analysis_window_spin.setValue(min(2048, self._settings.gui.max_points_per_trace))
 
         form.addRow("通道选择", self._analysis_channel_spin)
         form.addRow("PSD 样本数", self._analysis_window_spin)
