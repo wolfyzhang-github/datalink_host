@@ -856,9 +856,11 @@ class ProtocolTests(unittest.TestCase):
     def test_gps_timestamp_parsing_supports_debug_and_deploy_modes(self) -> None:
         debug_ts = gps_timestamp_to_us("2026-04-09 13:30:32 000000010", "debug")
         deploy_ts = gps_timestamp_to_us("20260409133032000000", "deploy")
+        deploy_dotted_ts = gps_timestamp_to_us("2026-04-22 08:18:48.900000", "deploy")
 
         self.assertEqual("20260409133032000000", format_timestamp_us(debug_ts))
         self.assertEqual("20260409133032000000", format_timestamp_us(deploy_ts))
+        self.assertEqual("20260422081848900000", format_timestamp_us(deploy_dotted_ts))
 
     def test_runtime_uses_previous_frame_timestamp_when_gps_is_unavailable(self) -> None:
         runtime = RuntimeService(AppSettings())

@@ -18,6 +18,9 @@ _DEBUG_PATTERN = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2}) (?P<fraction>\d{9})$"
 )
 _DEPLOY_PATTERN = re.compile(r"^(?P<stamp>\d{14})(?P<fraction>\d{6})$")
+_DEPLOY_DOTTED_PATTERN = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2})\.(?P<fraction>\d{6})$"
+)
 
 
 def gps_timestamp_to_us(raw_value: str, mode: str) -> int:
@@ -35,13 +38,20 @@ def gps_timestamp_to_us(raw_value: str, mode: str) -> int:
 
     if mode == "deploy":
         match = _DEPLOY_PATTERN.fullmatch(value)
-        if match is None:
-            raise ValueError(f"Unsupported GPS deploy timestamp format: {value!r}")
-        dt = datetime.strptime(
-            f"{match.group('stamp')}{match.group('fraction')}",
-            "%Y%m%d%H%M%S%f",
-        ).replace(tzinfo=timezone.utc)
-        return int(round(dt.timestamp() * 1_000_000))
+        if match is not None:
+            dt = datetime.strptime(
+                f"{match.group('stamp')}{match.group('fraction')}",
+                "%Y%m%d%H%M%S%f",
+            ).replace(tzinfo=timezone.utc)
+            return int(round(dt.timestamp() * 1_000_000))
+        dotted_match = _DEPLOY_DOTTED_PATTERN.fullmatch(value)
+        if dotted_match is not None:
+            dt = datetime.strptime(
+                f"{dotted_match.group('date')} {dotted_match.group('clock')} {dotted_match.group('fraction')}",
+                "%Y-%m-%d %H:%M:%S %f",
+            ).replace(tzinfo=timezone.utc)
+            return int(round(dt.timestamp() * 1_000_000))
+        raise ValueError(f"Unsupported GPS deploy timestamp format: {value!r}")
 
     raise ValueError(f"Unsupported GPS mode: {mode}")
 
@@ -208,4 +218,3 @@ class GpsTimeService:
     def _set_error(self, message: str) -> None:
         with self._lock:
             self._status = replace(self._status, last_error=message)
-
