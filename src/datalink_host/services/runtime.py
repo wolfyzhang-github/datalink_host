@@ -649,7 +649,10 @@ class RuntimeService:
         sample_count = frame.channels.shape[1]
         frame_duration_us = self._frame_duration_us(frame)
         if not self._settings.gps.enabled:
-            timestamp_us = int(round(frame.received_at * 1_000_000))
+            timestamp_us = self._start_time_from_reference_timestamp(
+                reference_timestamp_us=int(round(frame.received_at * 1_000_000)),
+                frame_duration_us=frame_duration_us,
+            )
             self._log_timestamp_resolution(
                 source="host_received_at",
                 assigned_timestamp_us=timestamp_us,
@@ -681,6 +684,7 @@ class RuntimeService:
             gps_status=gps_status,
             last_frame_start_us=last_frame_start_us,
             last_frame_duration_us=last_frame_duration_us,
+            frame_duration_us=frame_duration_us,
             gps_timestamp_anchor_us=gps_timestamp_anchor_us,
             timestamp_interval_seconds=self._settings.gps.timestamp_interval_seconds,
             gps_now_us=gps_now_us,
@@ -755,11 +759,24 @@ class RuntimeService:
         return int(round((sample_count / frame.sample_rate) * 1_000_000))
 
     @staticmethod
+    def _start_time_from_reference_timestamp(
+        *,
+        reference_timestamp_us: int | None,
+        frame_duration_us: int | None,
+    ) -> int | None:
+        if reference_timestamp_us is None:
+            return None
+        if frame_duration_us is None:
+            return reference_timestamp_us
+        return max(reference_timestamp_us - frame_duration_us, 0)
+
+    @staticmethod
     def _resolve_gps_aligned_timestamp(
         *,
         gps_status: GpsStatus,
         last_frame_start_us: int | None,
         last_frame_duration_us: int | None,
+        frame_duration_us: int | None,
         gps_timestamp_anchor_us: int | None,
         timestamp_interval_seconds: float,
         gps_now_us: int | None,
@@ -774,10 +791,14 @@ class RuntimeService:
             base_timestamp_us = gps_now_us or gps_status.last_timestamp_us
             if base_timestamp_us is None:
                 return None, False, None
-            return RuntimeService._snap_timestamp_to_cadence(
+            snapped_reference_us = RuntimeService._snap_timestamp_to_cadence(
                 timestamp_us=base_timestamp_us,
                 cadence_anchor_us=cadence_anchor_us,
                 interval_us=interval_us,
+            )
+            return RuntimeService._start_time_from_reference_timestamp(
+                reference_timestamp_us=snapped_reference_us,
+                frame_duration_us=frame_duration_us,
             ), False, None
         expected_next_us = last_frame_start_us + last_frame_duration_us
         if gps_now_us is not None:
@@ -786,14 +807,21 @@ class RuntimeService:
                 cadence_anchor_us=cadence_anchor_us,
                 interval_us=interval_us,
             )
-            gps_skew_us = snapped_current_gps_us - expected_next_us
+            aligned_current_start_us = RuntimeService._start_time_from_reference_timestamp(
+                reference_timestamp_us=snapped_current_gps_us,
+                frame_duration_us=frame_duration_us,
+            )
+            if aligned_current_start_us is None:
+                return None, False, None
+            gps_skew_us = aligned_current_start_us - expected_next_us
             resync_threshold_us = max(
                 interval_us * TIMESTAMP_RESYNC_MULTIPLIER,
                 last_frame_duration_us * TIMESTAMP_RESYNC_MULTIPLIER,
+                (frame_duration_us or 0) * TIMESTAMP_RESYNC_MULTIPLIER,
                 TIMESTAMP_RESYNC_MIN_THRESHOLD_US,
             )
-            if gps_skew_us >= resync_threshold_us and snapped_current_gps_us > last_frame_start_us:
-                return snapped_current_gps_us, True, gps_skew_us
+            if gps_skew_us >= resync_threshold_us and aligned_current_start_us > last_frame_start_us:
+                return aligned_current_start_us, True, gps_skew_us
         snapped_next_us = RuntimeService._snap_timestamp_to_cadence(
             timestamp_us=expected_next_us,
             cadence_anchor_us=cadence_anchor_us,

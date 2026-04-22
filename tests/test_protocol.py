@@ -982,7 +982,24 @@ class ProtocolTests(unittest.TestCase):
         snapshot = runtime.snapshot()
 
         self.assertEqual("20231114221320000000", snapshot.gps_last_timestamp)
-        self.assertEqual(1_700_000_000_500_000, frame.timestamp_us)
+        self.assertEqual(1_700_000_000_490_000, frame.timestamp_us)
+
+    def test_runtime_without_gps_uses_host_receive_time_as_frame_end(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gps = GpsSettings(enabled=False)
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 1000), dtype=np.float32),
+            received_at=1_700_000_001.250,
+        )
+
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_000_250_000, timestamp_us)
+        self.assertFalse(used_fallback)
+        self.assertIsNone(error)
+        runtime._datalink.close()
 
     def test_runtime_resyncs_frame_timestamp_when_current_gps_time_is_far_ahead(self) -> None:
         runtime = RuntimeService(AppSettings())
@@ -1016,7 +1033,7 @@ class ProtocolTests(unittest.TestCase):
         )
         timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
 
-        self.assertEqual(1_700_000_240_200_000, timestamp_us)
+        self.assertEqual(1_700_000_240_100_000, timestamp_us)
         self.assertFalse(used_fallback)
         self.assertIsNone(error)
         runtime._datalink.close()
