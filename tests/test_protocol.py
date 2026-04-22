@@ -489,6 +489,31 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(8, len(data1_files))
             self.assertEqual(8, len(data2_files))
 
+    def test_miniseed_writer_uses_frame_timestamp_as_segment_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = MiniSeedWriter(
+                StorageSettings(enabled=True, root=Path(tmpdir), file_duration_seconds=1)
+            )
+            frame = ProcessedFrame(
+                sample_rate=100.0,
+                raw=np.zeros((8, 100), dtype=np.float64),
+                unwrapped=np.zeros((8, 100), dtype=np.float64),
+                data1=np.ones((8, 100), dtype=np.float64),
+                data1_sample_rate=100.0,
+                data2=np.zeros((8, 0), dtype=np.float64),
+                data2_sample_rate=10.0,
+                received_at=1_700_000_000.0,
+                timestamp_us=1_700_000_000_000_000,
+            )
+
+            writer.write(frame)
+            writer.close()
+
+            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            self.assertTrue(data1_files)
+            stream = read(str(data1_files[0]))
+            self.assertAlmostEqual(1_700_000_000.0, float(stream[0].stats.starttime.timestamp), places=6)
+
     def test_datalink_packet_encoding_and_stream_id(self) -> None:
         publisher = DataLinkPublisher(
             DataLinkSettings(),
@@ -554,10 +579,10 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertEqual(2, len(packets))
         self.assertTrue(all(len(payload) <= 256 for payload, *_ in packets))
-        self.assertAlmostEqual(1_699_999_999.0, packets[0][2], places=6)
-        self.assertAlmostEqual(1_699_999_999.5, packets[0][3], places=6)
-        self.assertAlmostEqual(1_699_999_999.5, packets[1][2], places=6)
-        self.assertAlmostEqual(1_700_000_000.0, packets[1][3], places=6)
+        self.assertAlmostEqual(1_700_000_000.0, packets[0][2], places=6)
+        self.assertAlmostEqual(1_700_000_000.5, packets[0][3], places=6)
+        self.assertAlmostEqual(1_700_000_000.5, packets[1][2], places=6)
+        self.assertAlmostEqual(1_700_000_001.0, packets[1][3], places=6)
         publisher.close()
 
     def test_datalink_miniseed_sequence_numbers_increment_across_packets(self) -> None:
@@ -671,8 +696,8 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(1, len(packets))
         _, _, start_time, end_time = packets[0]
-        self.assertAlmostEqual(1_699_999_999.0, start_time, places=6)
-        self.assertAlmostEqual(1_700_000_000.0, end_time, places=6)
+        self.assertAlmostEqual(1_700_000_000.0, start_time, places=6)
+        self.assertAlmostEqual(1_700_000_001.0, end_time, places=6)
         publisher.close()
 
     def test_datalink_publish_uses_background_sender(self) -> None:
@@ -904,7 +929,8 @@ class ProtocolTests(unittest.TestCase):
     def test_runtime_uses_previous_frame_timestamp_when_gps_is_unavailable(self) -> None:
         runtime = RuntimeService(AppSettings())
         runtime._settings.gps = GpsSettings(enabled=True, mode="debug", port="tty.usbmodem")
-        runtime._last_frame_end_us = 1_700_000_000_000_000
+        runtime._last_frame_start_us = 1_700_000_000_000_000
+        runtime._last_frame_duration_us = 1_000_000
         runtime._gps_time.current_time_us = Mock(return_value=None)  # type: ignore[method-assign]
         runtime._gps_time.status = Mock(  # type: ignore[method-assign]
             return_value=GpsStatus(

@@ -43,7 +43,7 @@ class ProcessedFrame:
     data2_sample_rate: float
     # Time when this frame finished ingest on the host, as a Unix timestamp in seconds.
     received_at: float = field(default_factory=time)
-    # Authoritative frame end time in microseconds since Unix epoch.
+    # Authoritative frame start time in microseconds since Unix epoch.
     timestamp_us: int | None = None
 
 

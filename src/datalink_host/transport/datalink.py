@@ -196,8 +196,7 @@ class DataLinkPublisher:
         if timestamp_us is None:
             LOGGER.warning("Skipping DataLink publish because frame timestamp is unavailable")
             return []
-        end_time_us = timestamp_us
-        start_time = (end_time_us / 1_000_000.0) - (values.size / max(sample_rate, 1e-9))
+        start_time = timestamp_us / 1_000_000.0
         packets = self._encode_miniseed_packets(
             channel_index=channel_index,
             values=values,

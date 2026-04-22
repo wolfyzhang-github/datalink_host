@@ -73,7 +73,7 @@ class MiniSeedWriter:
             LOGGER.warning("Skipping storage write because frame timestamp is unavailable")
             return
         if state.next_segment_start is None:
-            state.next_segment_start = UTCDateTime(timestamp_us / 1_000_000.0) - (values.size / state.sample_rate)
+            state.next_segment_start = UTCDateTime(timestamp_us / 1_000_000.0)
         segment_start = state.next_segment_start
         state.next_segment_start = segment_start + (values.size / state.sample_rate)
         if state.data is None or state.data.size == 0:

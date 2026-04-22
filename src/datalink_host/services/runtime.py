@@ -130,7 +130,8 @@ class RuntimeService:
         self._data_server_active = False
         self._frames_enqueued = 0
         self._frames_processed = 0
-        self._last_frame_end_us: int | None = None
+        self._last_frame_start_us: int | None = None
+        self._last_frame_duration_us: int | None = None
         self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
 
     def _build_data_server(self) -> TcpDataServer:
@@ -591,7 +592,8 @@ class RuntimeService:
             )
         with self._lock:
             if timestamp_us is not None:
-                self._last_frame_end_us = timestamp_us
+                self._last_frame_start_us = timestamp_us
+                self._last_frame_duration_us = self._frame_duration_us(frame)
             self._snapshot.gps_fallback_active = used_fallback
             self._snapshot.gps_last_error = gps_error
             self._snapshot.packets_received += 1
@@ -614,12 +616,12 @@ class RuntimeService:
         if gps_now_us is not None:
             return gps_now_us, False, None
 
-        duration_us = self._frame_duration_us(frame)
         with self._lock:
-            last_frame_end_us = self._last_frame_end_us
-        if last_frame_end_us is not None and duration_us is not None:
+            last_frame_start_us = self._last_frame_start_us
+            last_frame_duration_us = self._last_frame_duration_us
+        if last_frame_start_us is not None and last_frame_duration_us is not None:
             return (
-                last_frame_end_us + duration_us,
+                last_frame_start_us + last_frame_duration_us,
                 True,
                 gps_status.last_error or "GPS unavailable; using previous frame timestamp fallback",
             )
