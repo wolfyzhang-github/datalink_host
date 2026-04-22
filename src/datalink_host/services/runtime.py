@@ -592,8 +592,6 @@ class RuntimeService:
         with self._lock:
             if timestamp_us is not None:
                 self._last_frame_end_us = timestamp_us
-                if self._settings.gps.enabled:
-                    self._snapshot.gps_last_timestamp = format_timestamp_us(timestamp_us)
             self._snapshot.gps_fallback_active = used_fallback
             self._snapshot.gps_last_error = gps_error
             self._snapshot.packets_received += 1

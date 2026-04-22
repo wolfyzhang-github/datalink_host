@@ -28,7 +28,7 @@ from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.ingest.protocol import PacketDecoder, build_packet, packet_to_frame
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline, compute_psd
-from datalink_host.services.gps_time import GpsStatus, format_timestamp_us, gps_timestamp_to_us
+from datalink_host.services.gps_time import GpsStatus, GpsTimeService, format_timestamp_us, gps_timestamp_to_us
 from datalink_host.services.runtime import RuntimeService
 from datalink_host.services.web_api import WebApiService, create_app
 from datalink_host.storage.miniseed import MiniSeedWriter
@@ -861,6 +861,45 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual("20260409133032000000", format_timestamp_us(debug_ts))
         self.assertEqual("20260409133032000000", format_timestamp_us(deploy_ts))
         self.assertEqual("20260422081848900000", format_timestamp_us(deploy_dotted_ts))
+
+    def test_gps_current_time_stays_monotonic_when_device_repeats_whole_seconds(self) -> None:
+        service = GpsTimeService(GpsSettings(enabled=True, mode="deploy", port="tty.usbmodem"))
+        service._record_timestamp(1_700_000_000_000_000, recorded_at_monotonic=10.0)
+
+        with patch("datalink_host.services.gps_time.time.monotonic", return_value=10.05):
+            first_now = service.current_time_us()
+
+        service._record_timestamp(1_700_000_000_000_000, recorded_at_monotonic=10.10)
+        with patch("datalink_host.services.gps_time.time.monotonic", return_value=10.10):
+            second_now = service.current_time_us()
+
+        assert first_now is not None
+        assert second_now is not None
+        self.assertGreaterEqual(second_now, first_now)
+
+    def test_runtime_snapshot_prefers_raw_gps_timestamp_over_extrapolated_frame_time(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gps = GpsSettings(enabled=True, mode="deploy", port="tty.usbmodem")
+        runtime._gps_time.current_time_us = Mock(return_value=1_700_000_000_500_000)  # type: ignore[method-assign]
+        runtime._gps_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GpsStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=1_700_000_000_000_000,
+                last_error=None,
+            )
+        )
+
+        frame = ChannelFrame(sample_rate=1000.0, channels=np.zeros((1, 10), dtype=np.float32))
+        runtime._on_frame(frame)
+        snapshot = runtime.snapshot()
+
+        self.assertEqual("20231114221320000000", snapshot.gps_last_timestamp)
+        self.assertEqual(1_700_000_000_500_000, frame.timestamp_us)
 
     def test_runtime_uses_previous_frame_timestamp_when_gps_is_unavailable(self) -> None:
         runtime = RuntimeService(AppSettings())

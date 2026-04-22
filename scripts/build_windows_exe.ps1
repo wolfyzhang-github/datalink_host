@@ -14,6 +14,19 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Assert-PathExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LiteralPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    if (-not (Test-Path -LiteralPath $LiteralPath)) {
+        throw "$Description was not found at $LiteralPath."
+    }
+}
+
 function Resolve-PythonCommand {
     $candidates = @(
         @{ Label = "py -3.12"; Command = @("py", "-3.12") },
@@ -66,6 +79,11 @@ $PyInstallerInVenv = Join-Path $VenvPath "Scripts\pyinstaller.exe"
 $SpecPath = Join-Path $ProjectRoot "datalink-host-gui.spec"
 $ExeOutputPath = Join-Path $ProjectRoot "dist\datalink-host-gui\datalink-host-gui.exe"
 $SmokeReportPath = Join-Path $ProjectRoot "dist\datalink-host-gui\smoke-report.json"
+$ExpectedWebAssets = @(
+    "bootstrap.min.css",
+    "bootstrap.bundle.min.js",
+    "chart.umd.min.js"
+)
 
 if ($OneFile) {
     $SpecPath = Join-Path $ProjectRoot "datalink-host-gui-onefile.spec"
@@ -118,11 +136,30 @@ if (-not (Test-Path -LiteralPath $ExeOutputPath)) {
     throw "Expected executable was not found at $ExeOutputPath."
 }
 
+if (-not $OneFile) {
+    Write-Step "Verifying bundled web assets in onedir output"
+    $BundledAssetsDir = Join-Path $ProjectRoot "dist\datalink-host-gui\_internal\datalink_host\web\assets"
+    Assert-PathExists -LiteralPath $BundledAssetsDir -Description "Bundled web assets directory"
+    foreach ($assetName in $ExpectedWebAssets) {
+        $assetPath = Join-Path $BundledAssetsDir $assetName
+        Assert-PathExists -LiteralPath $assetPath -Description "Bundled web asset '$assetName'"
+    }
+}
+
 if (-not $SkipSmokeTest) {
     Write-Step "Running frozen executable smoke test"
     & $ExeOutputPath --self-check --self-check-output $SmokeReportPath
     if ($LASTEXITCODE -ne 0) {
         throw "Frozen smoke test failed with exit code $LASTEXITCODE. See $SmokeReportPath."
+    }
+
+    Write-Step "Validating smoke report"
+    Assert-PathExists -LiteralPath $SmokeReportPath -Description "Smoke report"
+    $SmokeReport = Get-Content -LiteralPath $SmokeReportPath -Raw | ConvertFrom-Json
+    foreach ($assetName in $ExpectedWebAssets) {
+        if ($assetName -notin $SmokeReport.checks.web_ui.assets) {
+            throw "Smoke report does not list bundled web asset '$assetName'."
+        }
     }
     Write-Host "Smoke report created at:"
     Write-Host "  $SmokeReportPath"

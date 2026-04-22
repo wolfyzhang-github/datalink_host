@@ -6,12 +6,13 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from datalink_host.core.logging import get_recent_logs
 from datalink_host.core.config import WebSettings
 from datalink_host.services.runtime import RuntimeService
-from datalink_host.services.web_ui import INDEX_HTML
+from datalink_host.services.web_ui import INDEX_HTML, web_assets_path
 
 
 def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
@@ -56,6 +57,9 @@ def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
 
 def create_app(runtime: RuntimeService) -> FastAPI:
     app = FastAPI(title="datalink-host web control")
+    assets_dir = web_assets_path()
+    if not assets_dir.is_dir():
+        raise FileNotFoundError(f"Bundled web assets are missing: {assets_dir}")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -63,6 +67,7 @@ def create_app(runtime: RuntimeService) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:

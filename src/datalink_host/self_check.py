@@ -10,7 +10,7 @@ from typing import Any
 from datalink_host.core.config import AppSettings
 from datalink_host.core.frozen import patch_obspy_version_path_for_frozen
 from datalink_host.core.paths import ensure_runtime_dirs, runtime_root
-from datalink_host.services.web_ui import load_index_html
+from datalink_host.services.web_ui import bundled_web_asset_names, load_index_html
 
 
 def _write_report(report: dict[str, Any], output_path: Path | None) -> None:
@@ -50,7 +50,13 @@ def run_self_check(output_path: Path | None = None) -> int:
         html = load_index_html()
         if "<html" not in html.lower():
             raise ValueError("Embedded web UI was not loaded correctly")
-        report["checks"]["web_ui"] = {"bytes": len(html)}
+        bundled_assets = bundled_web_asset_names()
+        if not bundled_assets:
+            raise ValueError("Bundled web assets are missing")
+        report["checks"]["web_ui"] = {
+            "bytes": len(html),
+            "assets": list(bundled_assets),
+        }
 
         entry_points = list(
             importlib.metadata.entry_points(

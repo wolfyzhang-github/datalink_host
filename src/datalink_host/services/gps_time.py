@@ -88,6 +88,7 @@ class GpsTimeService:
             last_timestamp_us=None,
             last_error=None,
         )
+        self._current_timestamp_anchor_us: int | None = None
         self._last_timestamp_monotonic: float | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -150,12 +151,7 @@ class GpsTimeService:
 
     def current_time_us(self) -> int | None:
         with self._lock:
-            last_timestamp_us = self._status.last_timestamp_us
-            last_timestamp_monotonic = self._last_timestamp_monotonic
-        if last_timestamp_us is None or last_timestamp_monotonic is None:
-            return None
-        elapsed_us = int(round((time.monotonic() - last_timestamp_monotonic) * 1_000_000))
-        return last_timestamp_us + max(elapsed_us, 0)
+            return self._current_time_us_locked(time.monotonic())
 
     def available_ports(self) -> list[str]:
         return [port.device for port in list_ports.comports()]
@@ -203,9 +199,7 @@ class GpsTimeService:
             except Exception as exc:  # noqa: BLE001
                 self._set_error(str(exc))
                 continue
-            with self._lock:
-                self._status = replace(self._status, last_timestamp_us=timestamp_us, last_error=None)
-                self._last_timestamp_monotonic = time.monotonic()
+            self._record_timestamp(timestamp_us)
 
     def _snapshot_settings(self) -> GpsSettings:
         with self._lock:
@@ -218,3 +212,20 @@ class GpsTimeService:
     def _set_error(self, message: str) -> None:
         with self._lock:
             self._status = replace(self._status, last_error=message)
+
+    def _current_time_us_locked(self, now_monotonic: float) -> int | None:
+        anchor_timestamp_us = self._current_timestamp_anchor_us
+        last_timestamp_monotonic = self._last_timestamp_monotonic
+        if anchor_timestamp_us is None or last_timestamp_monotonic is None:
+            return None
+        elapsed_us = int(round((now_monotonic - last_timestamp_monotonic) * 1_000_000))
+        return anchor_timestamp_us + max(elapsed_us, 0)
+
+    def _record_timestamp(self, timestamp_us: int, *, recorded_at_monotonic: float | None = None) -> None:
+        now_monotonic = time.monotonic() if recorded_at_monotonic is None else recorded_at_monotonic
+        with self._lock:
+            current_time_us = self._current_time_us_locked(now_monotonic)
+            anchor_timestamp_us = timestamp_us if current_time_us is None else max(timestamp_us, current_time_us)
+            self._status = replace(self._status, last_timestamp_us=timestamp_us, last_error=None)
+            self._current_timestamp_anchor_us = anchor_timestamp_us
+            self._last_timestamp_monotonic = now_monotonic
