@@ -217,6 +217,7 @@ class DataLinkPublisher:
         start_time: float,
         storage_settings: StorageSettings,
         record_length_bytes: int,
+        sequence_number: int | None = None,
     ) -> bytes:
         trace = Trace(np.asarray(values, dtype=np.float32))
         trace.stats.network = storage_settings.network
@@ -227,12 +228,14 @@ class DataLinkPublisher:
         trace.stats.sampling_rate = sample_rate
 
         buffer = io.BytesIO()
-        Stream([trace]).write(
-            buffer,
-            format="MSEED",
-            encoding="FLOAT32",
-            reclen=record_length_bytes,
-        )
+        write_kwargs: dict[str, object] = {
+            "format": "MSEED",
+            "encoding": "FLOAT32",
+            "reclen": record_length_bytes,
+        }
+        if sequence_number is not None:
+            write_kwargs["sequence_number"] = sequence_number
+        Stream([trace]).write(buffer, **write_kwargs)
         return buffer.getvalue()
 
     def _encode_miniseed_packets(
@@ -256,7 +259,18 @@ class DataLinkPublisher:
         )
         end_time = start_time + (values.size / max(sample_rate, 1e-9))
         if len(payload) <= max_payload_bytes:
-            payload = self._assign_mseed_sequence_numbers(payload, record_length_bytes)
+            record_count = self._count_mseed_records(payload, record_length_bytes)
+            sequence_number = self._reserve_mseed_sequence_numbers(record_count)
+            if sequence_number != 1:
+                payload = self._encode_miniseed_record(
+                    channel_index=channel_index,
+                    values=values,
+                    sample_rate=sample_rate,
+                    start_time=start_time,
+                    storage_settings=storage_settings,
+                    record_length_bytes=record_length_bytes,
+                    sequence_number=sequence_number,
+                )
             return [(payload, start_time, end_time)]
         if values.size <= 1:
             raise DataLinkSendError(
@@ -303,6 +317,15 @@ class DataLinkPublisher:
                 f"payload_bytes={len(payload)}, record_length_bytes={record_length_bytes}"
             )
         return len(payload) // record_length_bytes
+
+    def _reserve_mseed_sequence_numbers(self, record_count: int) -> int:
+        with self._mseed_sequence_lock:
+            sequence_number = self._next_mseed_sequence_number
+            self._next_mseed_sequence_number = self._advance_mseed_sequence_number(
+                sequence_number,
+                record_count,
+            )
+        return sequence_number
 
     def _assign_mseed_sequence_numbers(self, payload: bytes, record_length_bytes: int) -> bytes:
         record_count = self._count_mseed_records(payload, record_length_bytes)

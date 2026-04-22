@@ -616,6 +616,24 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(f"{record_count + 1:06d}", second_payload[:6].decode("ascii"))
         publisher.close()
 
+    def test_datalink_miniseed_encoder_uses_provided_sequence_number(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+        payload = publisher._encode_miniseed_record(  # type: ignore[attr-defined]
+            channel_index=0,
+            values=np.ones(10_000, dtype=np.float32),
+            sample_rate=100.0,
+            start_time=1_700_000_000.0,
+            storage_settings=StorageSettings(),
+            record_length_bytes=4096,
+            sequence_number=42,
+        )
+        self.assertEqual("000042", payload[:6].decode("ascii"))
+        self.assertEqual("000043", payload[4096:4102].decode("ascii"))
+        publisher.close()
+
     def test_datalink_send_data2_uses_distinct_stream_suffix_without_group_placeholder(self) -> None:
         publisher = DataLinkPublisher(
             DataLinkSettings(send_data2=True),
