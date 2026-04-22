@@ -116,7 +116,7 @@ def create_app(runtime: RuntimeService) -> FastAPI:
 
     @app.get("/api/logs")
     async def logs(
-        limit: int = Query(default=200, ge=1, le=1000),
+        limit: int = Query(default=500, ge=1, le=2000),
         level: str = Query(default="all"),
     ) -> dict[str, Any]:
         normalized_level = level.strip().upper()

@@ -25,7 +25,12 @@ from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame, RuntimeSnapshot, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline
 from datalink_host.services.background_sink import BackgroundFrameSink
-from datalink_host.services.gps_time import GpsStatus, GpsTimeService, format_timestamp_us
+from datalink_host.services.gps_time import (
+    GpsStatus,
+    GpsTimeService,
+    format_timestamp_iso_utc,
+    format_timestamp_us,
+)
 from datalink_host.storage.miniseed import MiniSeedWriter
 from datalink_host.transport.datalink import DataLinkPublisher
 
@@ -51,6 +56,10 @@ LENGTH_FIELD_UNITS = {"bytes", "values"}
 BYTE_ORDERS = {"little", "big"}
 CHANNEL_LAYOUTS = {"interleaved", "channel-major"}
 GPS_MODES = {"debug", "deploy"}
+TIMESTAMP_RESOLUTION_LOG_SAMPLE_LIMIT = 12
+TIMESTAMP_RESOLUTION_LOG_PERIOD_SECONDS = 5.0
+TIMESTAMP_RESYNC_MIN_THRESHOLD_US = 2_000_000
+TIMESTAMP_RESYNC_MULTIPLIER = 5
 
 
 class RuntimeService:
@@ -134,6 +143,8 @@ class RuntimeService:
         self._last_frame_duration_us: int | None = None
         self._gps_timestamp_anchor_us: int | None = None
         self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
+        self._timestamp_resolution_count = 0
+        self._last_timestamp_resolution_log_monotonic = 0.0
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -635,36 +646,106 @@ class RuntimeService:
             )
 
     def _resolve_frame_timestamp(self, frame: ChannelFrame) -> tuple[int | None, bool, str | None]:
+        sample_count = frame.channels.shape[1]
+        frame_duration_us = self._frame_duration_us(frame)
         if not self._settings.gps.enabled:
-            return int(round(frame.received_at * 1_000_000)), False, None
+            timestamp_us = int(round(frame.received_at * 1_000_000))
+            self._log_timestamp_resolution(
+                source="host_received_at",
+                assigned_timestamp_us=timestamp_us,
+                gps_raw_timestamp_us=None,
+                gps_now_timestamp_us=None,
+                last_frame_start_us=None,
+                expected_next_us=None,
+                frame_duration_us=frame_duration_us,
+                sample_rate=frame.sample_rate,
+                sample_count=sample_count,
+                used_fallback=False,
+                error=None,
+                gps_skew_us=None,
+            )
+            return timestamp_us, False, None
 
         gps_status = self._gps_time.status()
+        gps_now_us = self._gps_time.current_time_us()
         with self._lock:
             last_frame_start_us = self._last_frame_start_us
             last_frame_duration_us = self._last_frame_duration_us
             gps_timestamp_anchor_us = self._gps_timestamp_anchor_us
-        aligned_gps_timestamp_us = self._resolve_gps_aligned_timestamp(
+        expected_next_us = (
+            None
+            if last_frame_start_us is None or last_frame_duration_us is None
+            else last_frame_start_us + last_frame_duration_us
+        )
+        aligned_gps_timestamp_us, resynced_to_current_gps, gps_skew_us = self._resolve_gps_aligned_timestamp(
             gps_status=gps_status,
             last_frame_start_us=last_frame_start_us,
             last_frame_duration_us=last_frame_duration_us,
             gps_timestamp_anchor_us=gps_timestamp_anchor_us,
             timestamp_interval_seconds=self._settings.gps.timestamp_interval_seconds,
+            gps_now_us=gps_now_us,
         )
         if aligned_gps_timestamp_us is not None:
             if gps_status.last_timestamp_us is not None and gps_timestamp_anchor_us is None:
                 with self._lock:
                     if self._gps_timestamp_anchor_us is None:
                         self._gps_timestamp_anchor_us = gps_status.last_timestamp_us
+            source = "gps_predicted_sequence"
+            if last_frame_start_us is None or last_frame_duration_us is None:
+                source = "gps_current_time" if gps_now_us is not None else "gps_raw_time"
+            elif resynced_to_current_gps:
+                source = "gps_resync_to_current_time"
+            self._log_timestamp_resolution(
+                source=source,
+                assigned_timestamp_us=aligned_gps_timestamp_us,
+                gps_raw_timestamp_us=gps_status.last_timestamp_us,
+                gps_now_timestamp_us=gps_now_us,
+                last_frame_start_us=last_frame_start_us,
+                expected_next_us=expected_next_us,
+                frame_duration_us=frame_duration_us,
+                sample_rate=frame.sample_rate,
+                sample_count=sample_count,
+                used_fallback=False,
+                error=None,
+                gps_skew_us=gps_skew_us,
+            )
             return aligned_gps_timestamp_us, False, None
 
         if last_frame_start_us is not None and last_frame_duration_us is not None:
-            return (
-                last_frame_start_us + last_frame_duration_us,
-                True,
-                gps_status.last_error or "GPS unavailable; using previous frame timestamp fallback",
+            timestamp_us = last_frame_start_us + last_frame_duration_us
+            error = gps_status.last_error or "GPS unavailable; using previous frame timestamp fallback"
+            self._log_timestamp_resolution(
+                source="previous_frame_fallback",
+                assigned_timestamp_us=timestamp_us,
+                gps_raw_timestamp_us=gps_status.last_timestamp_us,
+                gps_now_timestamp_us=gps_now_us,
+                last_frame_start_us=last_frame_start_us,
+                expected_next_us=expected_next_us,
+                frame_duration_us=frame_duration_us,
+                sample_rate=frame.sample_rate,
+                sample_count=sample_count,
+                used_fallback=True,
+                error=error,
+                gps_skew_us=None,
             )
+            return (timestamp_us, True, error)
 
-        return None, False, gps_status.last_error or "GPS unavailable and no fallback timestamp is available"
+        error = gps_status.last_error or "GPS unavailable and no fallback timestamp is available"
+        self._log_timestamp_resolution(
+            source="gps_unavailable",
+            assigned_timestamp_us=None,
+            gps_raw_timestamp_us=gps_status.last_timestamp_us,
+            gps_now_timestamp_us=gps_now_us,
+            last_frame_start_us=last_frame_start_us,
+            expected_next_us=expected_next_us,
+            frame_duration_us=frame_duration_us,
+            sample_rate=frame.sample_rate,
+            sample_count=sample_count,
+            used_fallback=False,
+            error=error,
+            gps_skew_us=None,
+        )
+        return None, False, error
 
     @staticmethod
     def _frame_duration_us(frame: ChannelFrame) -> int | None:
@@ -681,14 +762,38 @@ class RuntimeService:
         last_frame_duration_us: int | None,
         gps_timestamp_anchor_us: int | None,
         timestamp_interval_seconds: float,
-    ) -> int | None:
-        if gps_status.last_timestamp_us is None:
-            return None
-        if last_frame_start_us is None or last_frame_duration_us is None:
-            return gps_status.last_timestamp_us
+        gps_now_us: int | None,
+    ) -> tuple[int | None, bool, int | None]:
+        if gps_status.last_timestamp_us is None and gps_now_us is None:
+            return None, False, None
         interval_us = max(int(round(timestamp_interval_seconds * 1_000_000)), 1)
-        cadence_anchor_us = gps_timestamp_anchor_us or gps_status.last_timestamp_us
+        cadence_anchor_us = gps_timestamp_anchor_us or gps_status.last_timestamp_us or gps_now_us
+        if cadence_anchor_us is None:
+            return None, False, None
+        if last_frame_start_us is None or last_frame_duration_us is None:
+            base_timestamp_us = gps_now_us or gps_status.last_timestamp_us
+            if base_timestamp_us is None:
+                return None, False, None
+            return RuntimeService._snap_timestamp_to_cadence(
+                timestamp_us=base_timestamp_us,
+                cadence_anchor_us=cadence_anchor_us,
+                interval_us=interval_us,
+            ), False, None
         expected_next_us = last_frame_start_us + last_frame_duration_us
+        if gps_now_us is not None:
+            snapped_current_gps_us = RuntimeService._snap_timestamp_to_cadence(
+                timestamp_us=gps_now_us,
+                cadence_anchor_us=cadence_anchor_us,
+                interval_us=interval_us,
+            )
+            gps_skew_us = snapped_current_gps_us - expected_next_us
+            resync_threshold_us = max(
+                interval_us * TIMESTAMP_RESYNC_MULTIPLIER,
+                last_frame_duration_us * TIMESTAMP_RESYNC_MULTIPLIER,
+                TIMESTAMP_RESYNC_MIN_THRESHOLD_US,
+            )
+            if gps_skew_us >= resync_threshold_us and snapped_current_gps_us > last_frame_start_us:
+                return snapped_current_gps_us, True, gps_skew_us
         snapped_next_us = RuntimeService._snap_timestamp_to_cadence(
             timestamp_us=expected_next_us,
             cadence_anchor_us=cadence_anchor_us,
@@ -696,7 +801,7 @@ class RuntimeService:
         )
         if snapped_next_us <= last_frame_start_us:
             snapped_next_us = expected_next_us
-        return snapped_next_us
+        return snapped_next_us, False, None
 
     @staticmethod
     def _snap_timestamp_to_cadence(*, timestamp_us: int, cadence_anchor_us: int, interval_us: int) -> int:
@@ -705,6 +810,57 @@ class RuntimeService:
         offset_us = timestamp_us - cadence_anchor_us
         steps = int(round(offset_us / interval_us))
         return cadence_anchor_us + (steps * interval_us)
+
+    def _log_timestamp_resolution(
+        self,
+        *,
+        source: str,
+        assigned_timestamp_us: int | None,
+        gps_raw_timestamp_us: int | None,
+        gps_now_timestamp_us: int | None,
+        last_frame_start_us: int | None,
+        expected_next_us: int | None,
+        frame_duration_us: int | None,
+        sample_rate: float,
+        sample_count: int,
+        used_fallback: bool,
+        error: str | None,
+        gps_skew_us: int | None,
+    ) -> None:
+        self._timestamp_resolution_count += 1
+        now_monotonic = time.monotonic()
+        should_log = (
+            self._timestamp_resolution_count <= TIMESTAMP_RESOLUTION_LOG_SAMPLE_LIMIT
+            or used_fallback
+            or error is not None
+            or source == "gps_resync_to_current_time"
+            or (now_monotonic - self._last_timestamp_resolution_log_monotonic) >= TIMESTAMP_RESOLUTION_LOG_PERIOD_SECONDS
+        )
+        if not should_log:
+            return
+        self._last_timestamp_resolution_log_monotonic = now_monotonic
+        LOGGER.info(
+            "Frame timestamp resolved: source=%s assigned_utc=%s gps_raw_utc=%s gps_now_utc=%s "
+            "last_frame_start_utc=%s expected_next_utc=%s frame_duration_ms=%s gps_skew_ms=%s "
+            "sample_rate_hz=%.3f sample_count=%s fallback=%s error=%s decision_index=%s",
+            source,
+            format_timestamp_iso_utc(assigned_timestamp_us),
+            format_timestamp_iso_utc(gps_raw_timestamp_us),
+            format_timestamp_iso_utc(gps_now_timestamp_us),
+            format_timestamp_iso_utc(last_frame_start_us),
+            format_timestamp_iso_utc(expected_next_us),
+            "-"
+            if frame_duration_us is None
+            else f"{frame_duration_us / 1_000:.3f}",
+            "-"
+            if gps_skew_us is None
+            else f"{gps_skew_us / 1_000:.3f}",
+            sample_rate,
+            sample_count,
+            "yes" if used_fallback else "no",
+            error or "-",
+            self._timestamp_resolution_count,
+        )
 
     def _run_processor(self) -> None:
         while not self._stop_event.is_set():

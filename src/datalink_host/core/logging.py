@@ -8,7 +8,7 @@ import threading
 
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(threadName)s] %(name)s: %(message)s"
-_LOG_BUFFER_SIZE = 500
+_LOG_BUFFER_SIZE = 2000
 _LOG_BUFFER: deque[str] = deque(maxlen=_LOG_BUFFER_SIZE)
 _LOG_LOCK = threading.Lock()
 

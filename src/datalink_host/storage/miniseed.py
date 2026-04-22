@@ -9,7 +9,7 @@ from obspy import Stream, Trace, UTCDateTime
 
 from datalink_host.core.config import StorageSettings
 from datalink_host.models.messages import ProcessedFrame
-from datalink_host.services.gps_time import format_timestamp_us
+from datalink_host.services.gps_time import format_timestamp_iso_utc, format_timestamp_us
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,13 +60,21 @@ class MiniSeedWriter:
                         state = _StreamBuffer(sample_rate=sample_rate)
                         self._buffers[key] = state
                     self._append_segment(
+                        key=key,
                         state=state,
-                        values=np.asarray(channels[channel_index], dtype=np.float64),
+                        values=np.asarray(channels[channel_index], dtype=np.float32),
                         timestamp_us=frame.timestamp_us,
                     )
                     self._flush_buffer(key, state, settings)
 
-    def _append_segment(self, state: _StreamBuffer, values: np.ndarray, timestamp_us: int | None) -> None:
+    def _append_segment(
+        self,
+        *,
+        key: tuple[str, int],
+        state: _StreamBuffer,
+        values: np.ndarray,
+        timestamp_us: int | None,
+    ) -> None:
         if values.size == 0:
             return
         if timestamp_us is None:
@@ -74,6 +82,13 @@ class MiniSeedWriter:
             return
         if state.next_segment_start is None:
             state.next_segment_start = UTCDateTime(timestamp_us / 1_000_000.0)
+            LOGGER.info(
+                "Storage stream anchored: key=%s start_utc=%s sample_rate_hz=%.3f first_segment_samples=%s",
+                self._stream_label(key),
+                format_timestamp_iso_utc(timestamp_us),
+                state.sample_rate,
+                values.size,
+            )
         segment_start = state.next_segment_start
         state.next_segment_start = segment_start + (values.size / state.sample_rate)
         if state.data is None or state.data.size == 0:
@@ -102,6 +117,13 @@ class MiniSeedWriter:
                 state.data = None
                 return
         if flush_all and state.data is not None and state.data.size > 0:
+            LOGGER.info(
+                "Flushing residual MiniSEED buffer: key=%s pending_samples=%s sample_rate_hz=%.3f start_utc=%s",
+                self._stream_label(key),
+                state.data.size,
+                state.sample_rate,
+                format_timestamp_iso_utc(state.buffer_start.ns // 1000),
+            )
             self._write_chunk(key, state.buffer_start, state.sample_rate, state.data, settings)
             state.data = None
             state.buffer_start = None
@@ -122,21 +144,34 @@ class MiniSeedWriter:
         filename = (
             f"{settings.network}.{settings.station}.{timestamp}.{settings.location}.{channel_code}.mseed"
         )
-        trace = Trace(np.asarray(values, dtype=np.float64))
+        encoded_values = np.asarray(values, dtype=np.float32)
+        trace = Trace(encoded_values)
         trace.stats.network = settings.network
         trace.stats.station = settings.station
         trace.stats.location = settings.location
         trace.stats.channel = channel_code
         trace.stats.starttime = start_time
         trace.stats.sampling_rate = sample_rate
-        Stream([trace]).write(str(output_dir / filename), format="MSEED")
+        end_time = start_time + (encoded_values.size / max(sample_rate, 1e-9))
+        Stream([trace]).write(str(output_dir / filename), format="MSEED", encoding="FLOAT32")
         LOGGER.info(
-            "Wrote MiniSEED file %s with %s samples at %.3f Hz",
+            "Wrote MiniSEED file: path=%s stream=%s start_utc=%s end_utc=%s duration_s=%.3f "
+            "samples=%s sample_rate_hz=%.3f dtype=%s encoding=FLOAT32",
             output_dir / filename,
-            values.size,
+            self._stream_label(key),
+            format_timestamp_iso_utc(start_time.ns // 1000),
+            format_timestamp_iso_utc(end_time.ns // 1000),
+            encoded_values.size / max(sample_rate, 1e-9),
+            encoded_values.size,
             sample_rate,
+            encoded_values.dtype,
         )
 
     @staticmethod
     def _format_timestamp(timestamp: UTCDateTime) -> str:
         return format_timestamp_us(timestamp.ns // 1000)
+
+    @staticmethod
+    def _stream_label(key: tuple[str, int]) -> str:
+        group_name, channel_index = key
+        return f"{group_name}:{channel_index + 1:02d}"

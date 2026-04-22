@@ -524,6 +524,36 @@ class ProtocolTests(unittest.TestCase):
             self.assertTrue(data1_files)
             stream = read(str(data1_files[0]))
             self.assertAlmostEqual(1_700_000_000.0, float(stream[0].stats.starttime.timestamp), places=6)
+            self.assertEqual(np.dtype("float32"), stream[0].data.dtype)
+            self.assertEqual("FLOAT32", stream[0].stats.mseed.encoding)
+
+    def test_miniseed_writer_rolls_2s_files_from_first_gps_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = MiniSeedWriter(
+                StorageSettings(enabled=True, root=Path(tmpdir), file_duration_seconds=2)
+            )
+
+            for index in range(20):
+                frame = ProcessedFrame(
+                    sample_rate=5.0,
+                    raw=np.zeros((1, 1), dtype=np.float64),
+                    unwrapped=np.zeros((1, 1), dtype=np.float64),
+                    data1=np.ones((1, 1), dtype=np.float64),
+                    data1_sample_rate=5.0,
+                    data2=np.zeros((1, 0), dtype=np.float64),
+                    data2_sample_rate=1.0,
+                    received_at=1_700_000_000.0 + (index * 0.2),
+                    timestamp_us=1_700_000_000_000_000 + (index * 200_000),
+                )
+                writer.write(frame)
+            writer.close()
+
+            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            self.assertEqual(2, len(data1_files))
+            first_stream = read(str(data1_files[0]))
+            second_stream = read(str(data1_files[1]))
+            self.assertAlmostEqual(1_700_000_000.0, float(first_stream[0].stats.starttime.timestamp), places=6)
+            self.assertAlmostEqual(1_700_000_002.0, float(second_stream[0].stats.starttime.timestamp), places=6)
 
     def test_datalink_packet_encoding_and_stream_id(self) -> None:
         publisher = DataLinkPublisher(
@@ -913,6 +943,23 @@ class ProtocolTests(unittest.TestCase):
         assert second_now is not None
         self.assertGreaterEqual(second_now, first_now)
 
+    def test_gps_service_discards_stale_serial_input_when_connection_opens(self) -> None:
+        class _FakeSerial:
+            def __init__(self) -> None:
+                self.in_waiting = 4096
+                self.reset_called = False
+
+            def reset_input_buffer(self) -> None:
+                self.reset_called = True
+                self.in_waiting = 0
+
+        conn = _FakeSerial()
+
+        dropped_bytes = GpsTimeService._discard_stale_input(conn)  # type: ignore[arg-type]
+
+        self.assertEqual(4096, dropped_bytes)
+        self.assertTrue(conn.reset_called)
+
     def test_runtime_snapshot_prefers_raw_gps_timestamp_over_extrapolated_frame_time(self) -> None:
         runtime = RuntimeService(AppSettings())
         runtime._settings.gps = GpsSettings(enabled=True, mode="deploy", port="tty.usbmodem")
@@ -935,7 +982,44 @@ class ProtocolTests(unittest.TestCase):
         snapshot = runtime.snapshot()
 
         self.assertEqual("20231114221320000000", snapshot.gps_last_timestamp)
-        self.assertEqual(1_700_000_000_000_000, frame.timestamp_us)
+        self.assertEqual(1_700_000_000_500_000, frame.timestamp_us)
+
+    def test_runtime_resyncs_frame_timestamp_when_current_gps_time_is_far_ahead(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gps = GpsSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=0.1,
+        )
+        runtime._gps_timestamp_anchor_us = 1_700_000_000_000_000
+        runtime._last_frame_start_us = 1_700_000_000_100_000
+        runtime._last_frame_duration_us = 100_000
+        runtime._gps_time.current_time_us = Mock(return_value=1_700_000_240_200_000)  # type: ignore[method-assign]
+        runtime._gps_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GpsStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=1_700_000_240_000_000,
+                last_error=None,
+            )
+        )
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 100), dtype=np.float32),
+            received_at=1_700_000_240.243,
+        )
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_240_200_000, timestamp_us)
+        self.assertFalse(used_fallback)
+        self.assertIsNone(error)
+        runtime._datalink.close()
 
     def test_runtime_uses_previous_frame_timestamp_when_gps_is_unavailable(self) -> None:
         runtime = RuntimeService(AppSettings())
@@ -979,6 +1063,7 @@ class ProtocolTests(unittest.TestCase):
         runtime._gps_timestamp_anchor_us = 1_700_000_000_000_000
         runtime._last_frame_start_us = 1_700_000_000_100_000
         runtime._last_frame_duration_us = 100_000
+        runtime._gps_time.current_time_us = Mock(return_value=1_700_000_000_243_000)  # type: ignore[method-assign]
         runtime._gps_time.status = Mock(  # type: ignore[method-assign]
             return_value=GpsStatus(
                 enabled=True,
@@ -1015,6 +1100,7 @@ class ProtocolTests(unittest.TestCase):
         runtime._gps_timestamp_anchor_us = 1_700_000_000_000_000
         runtime._last_frame_start_us = 1_700_000_000_200_000
         runtime._last_frame_duration_us = 200_000
+        runtime._gps_time.current_time_us = Mock(return_value=1_700_000_000_590_000)  # type: ignore[method-assign]
         runtime._gps_time.status = Mock(  # type: ignore[method-assign]
             return_value=GpsStatus(
                 enabled=True,

@@ -1178,7 +1178,7 @@
       }
       try {
         const payload = await apiRequest(
-          `/api/logs?limit=300&level=${encodeURIComponent(els.logLevel.value)}`
+          `/api/logs?limit=1000&level=${encodeURIComponent(els.logLevel.value)}`
         );
         els.logsConsole.textContent = payload.lines && payload.lines.length
           ? payload.lines.join("\n")

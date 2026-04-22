@@ -1425,7 +1425,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._log_view is None or self._log_level_combo is None:
             return
         level = self._log_level_combo.currentText()
-        lines = get_recent_logs(300)
+        lines = get_recent_logs(1000)
         level_map = {
             "全部": None,
             "信息": "INFO",
