@@ -9,7 +9,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from datalink_host.core.config import AppSettings
 from datalink_host.core.logging import get_recent_logs
 from datalink_host.models.messages import RuntimeSnapshot
-from datalink_host.processing.pipeline import compute_psd
 from datalink_host.services.runtime import RuntimeService, slice_for_plot
 
 
@@ -149,23 +148,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._capture_path_edit: QtWidgets.QLineEdit | None = None
         self._capture_browse_button: QtWidgets.QPushButton | None = None
 
-        self._gps_enabled_checkbox: QtWidgets.QCheckBox | None = None
-        self._gps_port_combo: QtWidgets.QComboBox | None = None
-        self._gps_refresh_button: QtWidgets.QPushButton | None = None
-        self._gps_baudrate_spin: QtWidgets.QSpinBox | None = None
-        self._gps_mode_combo: QtWidgets.QComboBox | None = None
-        self._gps_poll_spin: QtWidgets.QDoubleSpinBox | None = None
-        self._gps_timestamp_interval_spin: QtWidgets.QDoubleSpinBox | None = None
+        self._gnss_enabled_checkbox: QtWidgets.QCheckBox | None = None
+        self._gnss_port_combo: QtWidgets.QComboBox | None = None
+        self._gnss_refresh_button: QtWidgets.QPushButton | None = None
+        self._gnss_baudrate_spin: QtWidgets.QSpinBox | None = None
+        self._gnss_mode_combo: QtWidgets.QComboBox | None = None
+        self._gnss_poll_spin: QtWidgets.QDoubleSpinBox | None = None
+        self._gnss_timestamp_interval_spin: QtWidgets.QDoubleSpinBox | None = None
 
-        self._analysis_channel_spin: QtWidgets.QSpinBox | None = None
-        self._analysis_window_spin: QtWidgets.QSpinBox | None = None
-        self._analysis_time_curve: pg.PlotDataItem | None = None
-        self._analysis_psd_curve: pg.PlotDataItem | None = None
         self._log_view: QtWidgets.QPlainTextEdit | None = None
         self._log_level_combo: QtWidgets.QComboBox | None = None
 
-        self._gps_last_timestamp_label: QtWidgets.QLabel | None = None
-        self._gps_last_error_label: QtWidgets.QLabel | None = None
+        self._gnss_last_timestamp_label: QtWidgets.QLabel | None = None
+        self._gnss_last_error_label: QtWidgets.QLabel | None = None
         self._remote_web_label: QtWidgets.QLabel | None = None
         self._remote_control_label: QtWidgets.QLabel | None = None
 
@@ -176,7 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_styles()
         self._configure_window_geometry()
         self._load_runtime_config_into_form()
-        self._refresh_gps_ports()
+        self._refresh_gnss_ports()
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -198,7 +193,6 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.setDocumentMode(True)
         tabs.addTab(self._build_settings_tab(), "参数设置")
         tabs.addTab(self._build_waveform_tab(), "波形显示")
-        tabs.addTab(self._build_analysis_tab(), "波形分析")
         tabs.addTab(self._build_status_tab(), "状态监控")
         tabs.addTab(self._build_remote_tab(), "远程传输")
         shell_layout.addWidget(tabs, stretch=1)
@@ -238,7 +232,7 @@ class MainWindow(QtWidgets.QMainWindow):
         content.setSpacing(16)
         content.addWidget(self._build_ingest_panel(), stretch=5)
         content.addWidget(self._build_storage_panel(), stretch=5)
-        content.addWidget(self._build_gps_panel(), stretch=4)
+        content.addWidget(self._build_gnss_panel(), stretch=4)
         layout.addLayout(content)
         layout.addStretch(1)
 
@@ -301,80 +295,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(workspace, stretch=1)
         return widget
 
-    def _build_analysis_tab(self) -> QtWidgets.QWidget:
-        widget = QtWidgets.QWidget(self)
-        layout = QtWidgets.QVBoxLayout(widget)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(16)
-        layout.addWidget(
-            self._build_page_intro(
-                "波形分析",
-                "上方查看时域波形，下方查看 PSD 结果；PSD 横轴和纵轴均使用对数坐标。",
-            )
-        )
-
-        workspace = QtWidgets.QFrame(widget)
-        workspace.setObjectName("workspace")
-        workspace_layout = QtWidgets.QHBoxLayout(workspace)
-        workspace_layout.setContentsMargins(18, 18, 18, 18)
-        workspace_layout.setSpacing(18)
-
-        plot_column = QtWidgets.QVBoxLayout()
-        plot_column.setSpacing(16)
-
-        time_card = self._panel_card("时域波形", workspace)
-        time_layout = QtWidgets.QVBoxLayout(time_card)
-        time_plot = self._create_plot_widget()
-        self._analysis_time_curve = time_plot.plot(pen=pg.mkPen("#224b8d", width=1.8))
-        time_layout.addWidget(time_plot, stretch=1)
-
-        psd_card = self._panel_card("PSD 计算结果", workspace)
-        psd_layout = QtWidgets.QVBoxLayout(psd_card)
-        psd_plot = self._create_plot_widget()
-        psd_plot.setLogMode(True, True)
-        self._analysis_psd_curve = psd_plot.plot(pen=pg.mkPen("#9d3c49", width=1.8))
-        psd_layout.addWidget(psd_plot, stretch=1)
-
-        plot_column.addWidget(time_card, stretch=1)
-        plot_column.addWidget(psd_card, stretch=1)
-        workspace_layout.addLayout(plot_column, stretch=5)
-
-        sidebar = self._panel_card("分析设置", workspace)
-        sidebar_layout = QtWidgets.QVBoxLayout(sidebar)
-        sidebar_layout.setSpacing(12)
-        form = QtWidgets.QFormLayout()
-        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-
-        self._analysis_channel_spin = QtWidgets.QSpinBox(sidebar)
-        self._analysis_channel_spin.setRange(1, self._settings.protocol.channels)
-        self._analysis_channel_spin.setValue(1)
-
-        self._analysis_window_spin = QtWidgets.QSpinBox(sidebar)
-        self._analysis_window_spin.setRange(16, self._settings.gui.max_points_per_trace)
-        self._analysis_window_spin.setSingleStep(128)
-        self._analysis_window_spin.setValue(min(2048, self._settings.gui.max_points_per_trace))
-
-        form.addRow("通道选择", self._analysis_channel_spin)
-        form.addRow("PSD 样本数", self._analysis_window_spin)
-        form.addRow("分析数据", self._create_mode_selector(sidebar))
-        form.addRow("当前源采样率", self._create_snapshot_label("source_sample_rate", sidebar))
-        form.addRow("降采样1", self._create_snapshot_label("data1_rate", sidebar))
-        form.addRow("降采样2", self._create_snapshot_label("data2_rate", sidebar))
-        sidebar_layout.addLayout(form)
-
-        note = QtWidgets.QLabel(
-            "PSD 计算基于当前页所选通道和窗口长度；当采样点不足时会自动等待更多数据。",
-            sidebar,
-        )
-        note.setWordWrap(True)
-        note.setObjectName("mutedText")
-        sidebar_layout.addWidget(note)
-        sidebar_layout.addStretch(1)
-        workspace_layout.addWidget(sidebar, stretch=1)
-
-        layout.addWidget(workspace, stretch=1)
-        return widget
-
     def _build_status_tab(self) -> QtWidgets.QWidget:
         widget = QtWidgets.QWidget(self)
         layout = QtWidgets.QVBoxLayout(widget)
@@ -383,7 +303,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(
             self._build_page_intro(
                 "状态监控",
-                "集中查看数据链路、处理队列、本地存储、远传发布和 GPS 状态，顶部使用条形进度显示队列压力。",
+                "集中查看数据链路、处理队列、本地存储、远传发布和 GNSS 状态，顶部使用条形进度显示队列压力。",
             )
         )
 
@@ -414,6 +334,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 STORAGE_QUEUE_CAPACITY,
                 "storage_enabled",
                 [
+                    ("storage_disk_usage_percent", "磁盘利用率"),
+                    ("storage_disk_free_bytes", "磁盘可用"),
                     ("storage_frames_dropped", "存储丢帧"),
                     ("storage_last_error", "存储错误"),
                 ],
@@ -441,7 +363,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "运行摘要",
                 [
                     ("control_connected", "控制连接"),
-                    ("gps_connected", "GPS 连接"),
+                    ("gnss_connected", "GNSS 连接"),
                     ("bytes_received", "已收字节"),
                     ("datalink_bytes_sent", "已发字节"),
                     ("last_error", "最近错误"),
@@ -550,7 +472,7 @@ class MainWindow(QtWidgets.QMainWindow):
         access_layout.addRow("Web API", self._remote_web_label)
         access_layout.addRow("控制端口", self._remote_control_label)
         access_layout.addRow("控制连接", self._create_snapshot_label("control_connected", access_card))
-        access_layout.addRow("GPS 时间", self._create_snapshot_label("gps_last_timestamp", access_card))
+        access_layout.addRow("GNSS 时间", self._create_snapshot_label("gnss_last_timestamp", access_card))
         side_column.addWidget(access_card)
         side_column.addStretch(1)
 
@@ -742,66 +664,69 @@ class MainWindow(QtWidgets.QMainWindow):
         runtime_form = QtWidgets.QFormLayout()
         runtime_form.addRow("存储队列", self._create_snapshot_label("storage_queue_depth", card))
         runtime_form.addRow("存储丢帧", self._create_snapshot_label("storage_frames_dropped", card))
+        runtime_form.addRow("磁盘总容量", self._create_snapshot_label("storage_disk_total_bytes", card))
+        runtime_form.addRow("磁盘利用率", self._create_snapshot_label("storage_disk_usage_percent", card))
+        runtime_form.addRow("磁盘可用", self._create_snapshot_label("storage_disk_free_bytes", card))
         runtime_form.addRow("最近错误", self._create_snapshot_label("storage_last_error", card))
         layout.addLayout(runtime_form)
         layout.addStretch(1)
         return card
 
-    def _build_gps_panel(self) -> QtWidgets.QWidget:
-        card = self._panel_card("GPS 设置", self)
+    def _build_gnss_panel(self) -> QtWidgets.QWidget:
+        card = self._panel_card("GNSS 设置", self)
         layout = QtWidgets.QVBoxLayout(card)
         layout.setSpacing(12)
 
         header = QtWidgets.QHBoxLayout()
-        header.addWidget(QtWidgets.QLabel("GPS 状态", card))
+        header.addWidget(QtWidgets.QLabel("GNSS 状态", card))
         lamp = IndicatorLamp(card)
-        self._register_lamp("gps_connected", lamp)
+        self._register_lamp("gnss_connected", lamp)
         header.addWidget(lamp)
         header.addStretch(1)
-        header.addWidget(self._create_snapshot_label("gps_connected", card))
+        header.addWidget(self._create_snapshot_label("gnss_connected", card))
         layout.addLayout(header)
 
-        self._gps_enabled_checkbox = QtWidgets.QCheckBox("启用 GPS 时间", card)
-        self._gps_enabled_checkbox.toggled.connect(self._update_form_state)
-        layout.addWidget(self._gps_enabled_checkbox)
+        self._gnss_enabled_checkbox = QtWidgets.QCheckBox("启用 GNSS 时间", card)
+        self._gnss_enabled_checkbox.toggled.connect(self._update_form_state)
+        layout.addWidget(self._gnss_enabled_checkbox)
 
         form = QtWidgets.QFormLayout()
-        self._gps_port_combo = QtWidgets.QComboBox(card)
-        self._gps_port_combo.setEditable(True)
-        self._gps_port_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        self._gps_refresh_button = QtWidgets.QPushButton("刷新串口", card)
-        self._gps_refresh_button.clicked.connect(self._refresh_gps_ports)
+        self._gnss_port_combo = QtWidgets.QComboBox(card)
+        self._gnss_port_combo.setEditable(True)
+        self._gnss_port_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self._gnss_refresh_button = QtWidgets.QPushButton("刷新串口", card)
+        self._gnss_refresh_button.clicked.connect(self._refresh_gnss_ports)
         port_row = QtWidgets.QHBoxLayout()
-        port_row.addWidget(self._gps_port_combo, stretch=1)
-        port_row.addWidget(self._gps_refresh_button)
+        port_row.addWidget(self._gnss_port_combo, stretch=1)
+        port_row.addWidget(self._gnss_refresh_button)
         port_widget = QtWidgets.QWidget(card)
         port_widget.setLayout(port_row)
 
-        self._gps_baudrate_spin = QtWidgets.QSpinBox(card)
-        self._gps_baudrate_spin.setRange(1, 921600)
-        self._gps_mode_combo = QtWidgets.QComboBox(card)
-        self._gps_mode_combo.addItem("调试模式", "debug")
-        self._gps_mode_combo.addItem("部署模式", "deploy")
-        self._gps_poll_spin = QtWidgets.QDoubleSpinBox(card)
-        self._gps_poll_spin.setRange(0.01, 10.0)
-        self._gps_poll_spin.setDecimals(2)
-        self._gps_timestamp_interval_spin = QtWidgets.QDoubleSpinBox(card)
-        self._gps_timestamp_interval_spin.setRange(0.001, 10.0)
-        self._gps_timestamp_interval_spin.setDecimals(3)
+        self._gnss_baudrate_spin = QtWidgets.QSpinBox(card)
+        self._gnss_baudrate_spin.setRange(1, 921600)
+        self._gnss_mode_combo = QtWidgets.QComboBox(card)
+        self._gnss_mode_combo.addItem("调试模式", "debug")
+        self._gnss_mode_combo.addItem("部署模式", "deploy")
+        self._gnss_poll_spin = QtWidgets.QDoubleSpinBox(card)
+        self._gnss_poll_spin.setRange(0.01, 10.0)
+        self._gnss_poll_spin.setDecimals(2)
+        self._gnss_timestamp_interval_spin = QtWidgets.QDoubleSpinBox(card)
+        self._gnss_timestamp_interval_spin.setRange(0.001, 10.0)
+        self._gnss_timestamp_interval_spin.setDecimals(3)
 
         form.addRow("串口", port_widget)
-        form.addRow("波特率", self._gps_baudrate_spin)
-        form.addRow("模式", self._gps_mode_combo)
-        form.addRow("轮询间隔(秒)", self._gps_poll_spin)
-        form.addRow("授时间隔(秒)", self._gps_timestamp_interval_spin)
+        form.addRow("波特率", self._gnss_baudrate_spin)
+        form.addRow("模式", self._gnss_mode_combo)
+        form.addRow("轮询间隔(秒)", self._gnss_poll_spin)
+        form.addRow("授时等待超时(秒)", self._gnss_timestamp_interval_spin)
         layout.addLayout(form)
 
         runtime_form = QtWidgets.QFormLayout()
-        self._gps_last_timestamp_label = _status_value_label(card)
-        self._gps_last_error_label = _status_value_label(card)
-        runtime_form.addRow("UTC 时间", self._gps_last_timestamp_label)
-        runtime_form.addRow("最近错误", self._gps_last_error_label)
-        runtime_form.addRow("回退模式", self._create_snapshot_label("gps_fallback_active", card))
+        self._gnss_last_timestamp_label = _status_value_label(card)
+        self._gnss_last_error_label = _status_value_label(card)
+        runtime_form.addRow("UTC 时间", self._gnss_last_timestamp_label)
+        runtime_form.addRow("最近错误", self._gnss_last_error_label)
+        runtime_form.addRow("回退模式", self._create_snapshot_label("gnss_fallback_active", card))
         layout.addLayout(runtime_form)
         layout.addStretch(1)
         return card
@@ -955,12 +880,12 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_send_data2_checkbox is not None
         assert self._capture_enabled_checkbox is not None
         assert self._capture_path_edit is not None
-        assert self._gps_enabled_checkbox is not None
-        assert self._gps_port_combo is not None
-        assert self._gps_baudrate_spin is not None
-        assert self._gps_mode_combo is not None
-        assert self._gps_poll_spin is not None
-        assert self._gps_timestamp_interval_spin is not None
+        assert self._gnss_enabled_checkbox is not None
+        assert self._gnss_port_combo is not None
+        assert self._gnss_baudrate_spin is not None
+        assert self._gnss_mode_combo is not None
+        assert self._gnss_poll_spin is not None
+        assert self._gnss_timestamp_interval_spin is not None
 
         processing = config["processing"]
         data_server = config["data_server"]
@@ -968,7 +893,7 @@ class MainWindow(QtWidgets.QMainWindow):
         storage = config["storage"]
         datalink = config["datalink"]
         capture = config["capture"]
-        gps = config["gps"]
+        gnss = config["gnss"]
 
         self._data1_rate_spin.setValue(processing["data1_rate"])
         self._data2_rate_spin.setValue(processing["data2_rate"])
@@ -1008,12 +933,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._capture_enabled_checkbox.setChecked(capture["enabled"])
         self._capture_path_edit.setText(capture["path"])
 
-        self._gps_enabled_checkbox.setChecked(gps["enabled"])
-        self._gps_baudrate_spin.setValue(gps["baudrate"])
-        self._gps_mode_combo.setCurrentIndex(0 if gps["mode"] == "debug" else 1)
-        self._gps_poll_spin.setValue(gps["poll_interval_seconds"])
-        self._gps_timestamp_interval_spin.setValue(gps["timestamp_interval_seconds"])
-        self._refresh_gps_ports(selected=gps["port"])
+        self._gnss_enabled_checkbox.setChecked(gnss["enabled"])
+        self._gnss_baudrate_spin.setValue(gnss["baudrate"])
+        self._gnss_mode_combo.setCurrentIndex(0 if gnss["mode"] == "debug" else 1)
+        self._gnss_poll_spin.setValue(gnss["poll_interval_seconds"])
+        self._gnss_timestamp_interval_spin.setValue(
+            gnss.get("packet_timestamp_timeout_seconds", gnss.get("timestamp_interval_seconds", 1.0))
+        )
+        self._refresh_gnss_ports(selected=gnss["port"])
         self._update_form_state()
         self._sync_mode_selectors()
         self._set_feedback("表单已同步到当前运行时配置。")
@@ -1056,20 +983,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if filename:
             self._capture_path_edit.setText(filename)
 
-    def _refresh_gps_ports(self, selected: str | None = None) -> None:
-        if self._gps_port_combo is None:
+    def _refresh_gnss_ports(self, selected: str | None = None) -> None:
+        if self._gnss_port_combo is None:
             return
-        current = (selected if selected is not None else self._gps_port_combo.currentText()).strip()
-        ports = self._runtime.gps_ports()
-        self._gps_port_combo.blockSignals(True)
-        self._gps_port_combo.clear()
+        current = (selected if selected is not None else self._gnss_port_combo.currentText()).strip()
+        ports = self._runtime.gnss_ports()
+        self._gnss_port_combo.blockSignals(True)
+        self._gnss_port_combo.clear()
         for port in ports:
-            self._gps_port_combo.addItem(port)
+            self._gnss_port_combo.addItem(port)
         if current:
             if current not in ports:
-                self._gps_port_combo.addItem(current)
-            self._gps_port_combo.setCurrentText(current)
-        self._gps_port_combo.blockSignals(False)
+                self._gnss_port_combo.addItem(current)
+            self._gnss_port_combo.setCurrentText(current)
+        self._gnss_port_combo.blockSignals(False)
 
     def _update_form_state(self) -> None:
         if self._data_server_mode_combo is None:
@@ -1126,14 +1053,14 @@ class MainWindow(QtWidgets.QMainWindow):
             ],
         )
         self._set_section_enabled(
-            self._gps_enabled_checkbox.isChecked() if self._gps_enabled_checkbox is not None else False,
+            self._gnss_enabled_checkbox.isChecked() if self._gnss_enabled_checkbox is not None else False,
             [
-                self._gps_port_combo,
-                self._gps_refresh_button,
-                self._gps_baudrate_spin,
-                self._gps_mode_combo,
-                self._gps_poll_spin,
-                self._gps_timestamp_interval_spin,
+                self._gnss_port_combo,
+                self._gnss_refresh_button,
+                self._gnss_baudrate_spin,
+                self._gnss_mode_combo,
+                self._gnss_poll_spin,
+                self._gnss_timestamp_interval_spin,
             ],
         )
         self._update_processing_controls()
@@ -1173,12 +1100,12 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_send_data2_checkbox is not None
         assert self._capture_enabled_checkbox is not None
         assert self._capture_path_edit is not None
-        assert self._gps_enabled_checkbox is not None
-        assert self._gps_port_combo is not None
-        assert self._gps_baudrate_spin is not None
-        assert self._gps_mode_combo is not None
-        assert self._gps_poll_spin is not None
-        assert self._gps_timestamp_interval_spin is not None
+        assert self._gnss_enabled_checkbox is not None
+        assert self._gnss_port_combo is not None
+        assert self._gnss_baudrate_spin is not None
+        assert self._gnss_mode_combo is not None
+        assert self._gnss_poll_spin is not None
+        assert self._gnss_timestamp_interval_spin is not None
 
         payload = {
             "processing": {
@@ -1222,13 +1149,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 "enabled": self._capture_enabled_checkbox.isChecked(),
                 "path": self._capture_path_edit.text().strip() or "./var/captures/session.dlhcap",
             },
-            "gps": {
-                "enabled": self._gps_enabled_checkbox.isChecked(),
-                "port": self._gps_port_combo.currentText().strip(),
-                "baudrate": self._gps_baudrate_spin.value(),
-                "mode": self._gps_mode_combo.currentData(),
-                "poll_interval_seconds": self._gps_poll_spin.value(),
-                "timestamp_interval_seconds": self._gps_timestamp_interval_spin.value(),
+            "gnss": {
+                "enabled": self._gnss_enabled_checkbox.isChecked(),
+                "port": self._gnss_port_combo.currentText().strip(),
+                "baudrate": self._gnss_baudrate_spin.value(),
+                "mode": self._gnss_mode_combo.currentData(),
+                "poll_interval_seconds": self._gnss_poll_spin.value(),
+                "packet_timestamp_timeout_seconds": self._gnss_timestamp_interval_spin.value(),
             },
         }
         try:
@@ -1269,8 +1196,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 curve.setData([])
                 continue
             curve.setData(np.arange(data.shape[1]), data[index])
-        self._update_analysis(snapshot, data)
         self._update_logs()
+
+    @staticmethod
+    def _format_bytes(value: int | None) -> str:
+        if value is None:
+            return "-"
+        units = ("B", "KB", "MB", "GB", "TB", "PB")
+        size = float(value)
+        unit_index = 0
+        while size >= 1024.0 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
+        if unit_index == 0:
+            return f"{int(size)} {units[unit_index]}"
+        return f"{size:.1f} {units[unit_index]}"
 
     def _update_status(self, snapshot: RuntimeSnapshot) -> None:
         values = {
@@ -1287,6 +1227,12 @@ class MainWindow(QtWidgets.QMainWindow):
             "storage_queue_depth": str(snapshot.storage_queue_depth),
             "storage_frames_dropped": f"{snapshot.storage_frames_dropped:,}",
             "storage_last_error": snapshot.storage_last_error or "-",
+            "storage_disk_total_bytes": self._format_bytes(snapshot.storage_disk_total_bytes),
+            "storage_disk_used_bytes": self._format_bytes(snapshot.storage_disk_used_bytes),
+            "storage_disk_free_bytes": self._format_bytes(snapshot.storage_disk_free_bytes),
+            "storage_disk_usage_percent": (
+                "-" if snapshot.storage_disk_usage_percent is None else f"{snapshot.storage_disk_usage_percent:.1f}%"
+            ),
             "datalink_enabled": "已启用" if snapshot.datalink_enabled else "未启用",
             "datalink_connected": "已连接" if snapshot.datalink_connected else "未连接",
             "datalink_packets_sent": f"{snapshot.datalink_packets_sent:,}",
@@ -1297,13 +1243,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "datalink_publish_frames_dropped": f"{snapshot.datalink_publish_frames_dropped:,}",
             "datalink_publish_last_error": snapshot.datalink_publish_last_error or "-",
             "capture_enabled": "已启用" if snapshot.capture_enabled else "未启用",
-            "gps_enabled": "已启用" if snapshot.gps_enabled else "未启用",
-            "gps_connected": "已连接" if snapshot.gps_connected else "未连接",
-            "gps_mode": snapshot.gps_mode,
-            "gps_port": snapshot.gps_port or "-",
-            "gps_last_timestamp": snapshot.gps_last_timestamp or "-",
-            "gps_last_error": snapshot.gps_last_error or "-",
-            "gps_fallback_active": "是" if snapshot.gps_fallback_active else "否",
+            "gnss_enabled": "已启用" if snapshot.gnss_enabled else "未启用",
+            "gnss_connected": "已连接" if snapshot.gnss_connected else "未连接",
+            "gnss_mode": snapshot.gnss_mode,
+            "gnss_port": snapshot.gnss_port or "-",
+            "gnss_last_timestamp": snapshot.gnss_last_timestamp or "-",
+            "gnss_last_error": snapshot.gnss_last_error or "-",
+            "gnss_fallback_active": "是" if snapshot.gnss_fallback_active else "否",
             "last_error": snapshot.last_error or "-",
         }
         for key, labels in self._status_labels.items():
@@ -1317,8 +1263,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "storage_enabled": snapshot.storage_enabled,
             "datalink_enabled": snapshot.datalink_enabled,
             "datalink_connected": snapshot.datalink_connected,
-            "gps_enabled": snapshot.gps_enabled,
-            "gps_connected": snapshot.gps_connected,
+            "gnss_enabled": snapshot.gnss_enabled,
+            "gnss_connected": snapshot.gnss_connected,
             "capture_enabled": snapshot.capture_enabled,
         }
         for key, lamps in self._status_lamps.items():
@@ -1330,10 +1276,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_queue_bar("storage", snapshot.storage_queue_depth, STORAGE_QUEUE_CAPACITY)
         self._update_queue_bar("datalink", snapshot.datalink_publish_queue_depth, DATALINK_QUEUE_CAPACITY)
 
-        if self._gps_last_timestamp_label is not None:
-            self._gps_last_timestamp_label.setText(snapshot.gps_last_timestamp or "-")
-        if self._gps_last_error_label is not None:
-            self._gps_last_error_label.setText(snapshot.gps_last_error or "-")
+        if self._gnss_last_timestamp_label is not None:
+            self._gnss_last_timestamp_label.setText(snapshot.gnss_last_timestamp or "-")
+        if self._gnss_last_error_label is not None:
+            self._gnss_last_error_label.setText(snapshot.gnss_last_error or "-")
         if self._remote_web_label is not None:
             self._remote_web_label.setText(f"http://{self._settings.web.host}:{self._settings.web.port}")
         if self._remote_control_label is not None:
@@ -1385,41 +1331,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._data_mode == "data2":
             return slice_for_plot(snapshot.latest_data2, self._settings.gui.max_points_per_trace)
         return slice_for_plot(snapshot.latest_unwrapped, self._settings.gui.max_points_per_trace)
-
-    def _update_analysis(self, snapshot: RuntimeSnapshot, data: np.ndarray | None) -> None:
-        if self._analysis_channel_spin is None or self._analysis_window_spin is None:
-            return
-        if self._analysis_time_curve is None or self._analysis_psd_curve is None:
-            return
-        if data is None or data.size == 0:
-            self._analysis_time_curve.setData([])
-            self._analysis_psd_curve.setData([])
-            return
-
-        channel_index = self._analysis_channel_spin.value() - 1
-        if channel_index >= data.shape[0]:
-            self._analysis_time_curve.setData([])
-            self._analysis_psd_curve.setData([])
-            return
-
-        channel_data = data[channel_index]
-        window = min(self._analysis_window_spin.value(), channel_data.size)
-        channel_window = channel_data[-window:]
-        self._analysis_time_curve.setData(np.arange(channel_window.size), channel_window)
-
-        sample_rate = self._selected_sample_rate(snapshot)
-        freqs, psd = compute_psd(channel_window, sample_rate)
-        if freqs.size <= 1:
-            self._analysis_psd_curve.setData([])
-            return
-        self._analysis_psd_curve.setData(freqs[1:], np.maximum(psd[1:], 1e-18))
-
-    def _selected_sample_rate(self, snapshot: RuntimeSnapshot) -> float:
-        if self._data_mode == "data1":
-            return snapshot.data1_rate
-        if self._data_mode == "data2":
-            return snapshot.data2_rate
-        return snapshot.source_sample_rate or 1.0
 
     def _update_logs(self) -> None:
         if self._log_view is None or self._log_level_combo is None:

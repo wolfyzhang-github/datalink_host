@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import io
 import logging
+import shutil
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 from obspy import Stream, Trace, UTCDateTime
 
 from datalink_host.core.config import StorageSettings
+from datalink_host.core.logging import get_recent_logs
 from datalink_host.models.messages import ProcessedFrame
-from datalink_host.services.gps_time import format_timestamp_iso_utc, format_timestamp_us
+from datalink_host.services.gnss_time import format_timestamp_iso_utc
 
 
 LOGGER = logging.getLogger(__name__)
+STORAGE_FILE_TYPE_MARKER = "R"
+LOG_CHANNEL_CODE = "LOG"
 
 
 @dataclass(slots=True)
@@ -21,6 +28,14 @@ class _StreamBuffer:
     next_segment_start: UTCDateTime | None = None
     buffer_start: UTCDateTime | None = None
     data: np.ndarray | None = None
+
+
+@dataclass(slots=True)
+class DiskUsage:
+    total_bytes: int
+    used_bytes: int
+    free_bytes: int
+    usage_percent: float
 
 
 class MiniSeedWriter:
@@ -32,6 +47,22 @@ class MiniSeedWriter:
     def update_settings(self, settings: StorageSettings) -> None:
         with self._lock:
             self._settings = settings
+
+    def disk_usage(self) -> DiskUsage | None:
+        with self._lock:
+            root = self._settings.root
+        try:
+            usage = shutil.disk_usage(self._existing_disk_path(root))
+        except OSError as exc:
+            LOGGER.warning("Unable to read storage disk usage: root=%s error=%s", root, exc)
+            return None
+        usage_percent = (usage.used / usage.total * 100.0) if usage.total > 0 else 0.0
+        return DiskUsage(
+            total_bytes=int(usage.total),
+            used_bytes=int(usage.used),
+            free_bytes=int(usage.free),
+            usage_percent=usage_percent,
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -141,8 +172,11 @@ class MiniSeedWriter:
         output_dir.mkdir(parents=True, exist_ok=True)
         channel_code = settings.channel_codes[channel_index]
         timestamp = self._format_timestamp(start_time)
-        filename = (
-            f"{settings.network}.{settings.station}.{timestamp}.{settings.location}.{channel_code}.mseed"
+        filename = self._build_filename(
+            settings=settings,
+            timestamp=timestamp,
+            channel_code=channel_code,
+            extension="mseed",
         )
         encoded_values = np.asarray(values, dtype=np.float32)
         trace = Trace(encoded_values)
@@ -153,11 +187,21 @@ class MiniSeedWriter:
         trace.stats.starttime = start_time
         trace.stats.sampling_rate = sample_rate
         end_time = start_time + (encoded_values.size / max(sample_rate, 1e-9))
-        Stream([trace]).write(str(output_dir / filename), format="MSEED", encoding="FLOAT32")
+        output_path = output_dir / filename
+        mseed_payload = self._encode_miniseed(trace)
+        log_filename = self._build_filename(
+            settings=settings,
+            timestamp=timestamp,
+            channel_code=LOG_CHANNEL_CODE,
+            extension="log",
+        )
+        log_content = self._build_log_content(start_time=start_time, end_time=end_time)
+        self._ensure_disk_space(settings.root, len(mseed_payload) + len(log_content.encode("utf-8")))
+        output_path.write_bytes(mseed_payload)
         LOGGER.info(
             "Wrote MiniSEED file: path=%s stream=%s start_utc=%s end_utc=%s duration_s=%.3f "
             "samples=%s sample_rate_hz=%.3f dtype=%s encoding=FLOAT32",
-            output_dir / filename,
+            output_path,
             self._stream_label(key),
             format_timestamp_iso_utc(start_time.ns // 1000),
             format_timestamp_iso_utc(end_time.ns // 1000),
@@ -166,10 +210,106 @@ class MiniSeedWriter:
             sample_rate,
             encoded_values.dtype,
         )
+        (output_dir / log_filename).write_text(log_content, encoding="utf-8")
+
+    @staticmethod
+    def _encode_miniseed(trace: Trace) -> bytes:
+        buffer = io.BytesIO()
+        Stream([trace]).write(buffer, format="MSEED", encoding="FLOAT32")
+        return buffer.getvalue()
+
+    @staticmethod
+    def _build_filename(
+        *,
+        settings: StorageSettings,
+        timestamp: str,
+        channel_code: str,
+        extension: str,
+    ) -> str:
+        return (
+            f"{settings.network}.{settings.station}.{timestamp}.{STORAGE_FILE_TYPE_MARKER}."
+            f"{settings.location}.{channel_code}.{extension}"
+        )
+
+    @staticmethod
+    def _build_log_content(*, start_time: UTCDateTime, end_time: UTCDateTime) -> str:
+        lines = get_recent_logs(2000)
+        header = (
+            f"# MiniSEED sidecar log\n"
+            f"# start_utc={format_timestamp_iso_utc(start_time.ns // 1000)}\n"
+            f"# end_utc={format_timestamp_iso_utc(end_time.ns // 1000)}\n"
+        )
+        return header + ("\n".join(lines) if lines else "") + "\n"
+
+    def _ensure_disk_space(self, root: Path, required_bytes: int) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        while True:
+            usage = shutil.disk_usage(root)
+            if usage.free >= required_bytes:
+                return
+            oldest_mseed = self._oldest_mseed_file(root)
+            if oldest_mseed is None:
+                raise OSError(
+                    f"Insufficient disk space for MiniSEED write: required_bytes={required_bytes}, "
+                    f"free_bytes={usage.free}, root={root}"
+                )
+            self._delete_stored_mseed(oldest_mseed)
+
+    def _oldest_mseed_file(self, root: Path) -> Path | None:
+        candidates = [path for path in root.rglob("*.mseed") if path.is_file()]
+        if not candidates:
+            return None
+        return min(candidates, key=self._mseed_sort_key)
+
+    @staticmethod
+    def _mseed_sort_key(path: Path) -> tuple[str, float, str]:
+        parts = path.name.split(".")
+        if len(parts) >= 7 and parts[-1] == "mseed":
+            timestamp = parts[2]
+        else:
+            timestamp = ""
+        try:
+            modified = path.stat().st_mtime
+        except OSError:
+            modified = 0.0
+        return (timestamp, modified, str(path))
+
+    def _delete_stored_mseed(self, path: Path) -> None:
+        log_path = self._log_sidecar_for_mseed(path)
+        try:
+            path.unlink()
+            LOGGER.warning("Deleted oldest MiniSEED file to free disk space: path=%s", path)
+        except FileNotFoundError:
+            pass
+        if log_path is None:
+            return
+        try:
+            log_path.unlink()
+            LOGGER.warning("Deleted MiniSEED sidecar log during rolling storage cleanup: path=%s", log_path)
+        except FileNotFoundError:
+            pass
+
+    @staticmethod
+    def _log_sidecar_for_mseed(path: Path) -> Path | None:
+        parts = path.name.split(".")
+        if len(parts) < 7 or parts[-1] != "mseed":
+            return None
+        parts[-2] = LOG_CHANNEL_CODE
+        parts[-1] = "log"
+        return path.with_name(".".join(parts))
+
+    @staticmethod
+    def _existing_disk_path(path: Path) -> Path:
+        current = path.expanduser()
+        while not current.exists() and current != current.parent:
+            current = current.parent
+        return current if current.exists() else Path(".")
 
     @staticmethod
     def _format_timestamp(timestamp: UTCDateTime) -> str:
-        return format_timestamp_us(timestamp.ns // 1000)
+        seconds, micros = divmod(timestamp.ns // 1000, 1_000_000)
+        dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
+        return dt.strftime("%Y%m%d%H%M%S") + f"{micros // 1000:03d}"
 
     @staticmethod
     def _stream_label(key: tuple[str, int]) -> str:

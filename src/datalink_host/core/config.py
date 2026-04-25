@@ -43,6 +43,7 @@ class ProcessingSettings:
     data1_rate: float = 100.0
     data2_rate: float = 10.0
     enable_phase_unwrap: bool = True
+    baseline_length_meters: float | None = None
 
 
 @dataclass(slots=True)
@@ -79,13 +80,14 @@ class DataLinkSettings:
 
 
 @dataclass(slots=True)
-class GpsSettings:
+class GnssSettings:
     enabled: bool = False
     port: str = ""
     baudrate: int = 115200
     mode: str = "debug"
     poll_interval_seconds: float = 0.1
     timestamp_interval_seconds: float = 0.1
+    packet_timestamp_timeout_seconds: float = 1.0
     serial_timeout_seconds: float = 0.1
     command: str = "timestamp"
 
@@ -117,7 +119,7 @@ class AppSettings:
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
     storage: StorageSettings = field(default_factory=StorageSettings)
     datalink: DataLinkSettings = field(default_factory=DataLinkSettings)
-    gps: GpsSettings = field(default_factory=GpsSettings)
+    gnss: GnssSettings = field(default_factory=GnssSettings)
     web: WebSettings = field(default_factory=WebSettings)
     gui: GuiSettings = field(default_factory=GuiSettings)
     capture: CaptureSettings = field(default_factory=CaptureSettings)

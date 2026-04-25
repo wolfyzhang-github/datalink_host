@@ -28,10 +28,15 @@ def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
         "source_sample_rate": snapshot.source_sample_rate,
         "data1_rate": snapshot.data1_rate,
         "data2_rate": snapshot.data2_rate,
+        "baseline_length_meters": snapshot.baseline_length_meters,
         "storage_enabled": snapshot.storage_enabled,
         "storage_queue_depth": snapshot.storage_queue_depth,
         "storage_frames_dropped": snapshot.storage_frames_dropped,
         "storage_last_error": snapshot.storage_last_error,
+        "storage_disk_total_bytes": snapshot.storage_disk_total_bytes,
+        "storage_disk_used_bytes": snapshot.storage_disk_used_bytes,
+        "storage_disk_free_bytes": snapshot.storage_disk_free_bytes,
+        "storage_disk_usage_percent": snapshot.storage_disk_usage_percent,
         "datalink_enabled": snapshot.datalink_enabled,
         "datalink_connected": snapshot.datalink_connected,
         "datalink_packets_sent": snapshot.datalink_packets_sent,
@@ -42,14 +47,14 @@ def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
         "datalink_publish_frames_dropped": snapshot.datalink_publish_frames_dropped,
         "datalink_publish_last_error": snapshot.datalink_publish_last_error,
         "capture_enabled": snapshot.capture_enabled,
-        "gps_enabled": snapshot.gps_enabled,
-        "gps_connected": snapshot.gps_connected,
-        "gps_mode": snapshot.gps_mode,
-        "gps_port": snapshot.gps_port,
-        "gps_baudrate": snapshot.gps_baudrate,
-        "gps_last_timestamp": snapshot.gps_last_timestamp,
-        "gps_last_error": snapshot.gps_last_error,
-        "gps_fallback_active": snapshot.gps_fallback_active,
+        "gnss_enabled": snapshot.gnss_enabled,
+        "gnss_connected": snapshot.gnss_connected,
+        "gnss_mode": snapshot.gnss_mode,
+        "gnss_port": snapshot.gnss_port,
+        "gnss_baudrate": snapshot.gnss_baudrate,
+        "gnss_last_timestamp": snapshot.gnss_last_timestamp,
+        "gnss_last_error": snapshot.gnss_last_error,
+        "gnss_fallback_active": snapshot.gnss_fallback_active,
         "last_error": snapshot.last_error,
         "updated_at": snapshot.updated_at,
     }
@@ -110,9 +115,9 @@ def create_app(runtime: RuntimeService) -> FastAPI:
         runtime.pause_processing()
         return {"status": "ok", "payload": _status_payload(runtime)}
 
-    @app.get("/api/gps/ports")
-    async def gps_ports() -> dict[str, Any]:
-        return {"status": "ok", "payload": runtime.gps_ports()}
+    @app.get("/api/gnss/ports")
+    async def gnss_ports() -> dict[str, Any]:
+        return {"status": "ok", "payload": runtime.gnss_ports()}
 
     @app.get("/api/logs")
     async def logs(
@@ -127,13 +132,13 @@ def create_app(runtime: RuntimeService) -> FastAPI:
             raise HTTPException(status_code=400, detail="Unsupported log level")
         return {"status": "ok", "payload": {"lines": lines[-limit:]}}
 
-    @app.post("/api/gps/start")
-    async def gps_start() -> dict[str, Any]:
-        return {"status": "ok", "payload": runtime.update_config({"gps": {"enabled": True}})}
+    @app.post("/api/gnss/start")
+    async def gnss_start() -> dict[str, Any]:
+        return {"status": "ok", "payload": runtime.update_config({"gnss": {"enabled": True}})}
 
-    @app.post("/api/gps/stop")
-    async def gps_stop() -> dict[str, Any]:
-        return {"status": "ok", "payload": runtime.update_config({"gps": {"enabled": False}})}
+    @app.post("/api/gnss/stop")
+    async def gnss_stop() -> dict[str, Any]:
+        return {"status": "ok", "payload": runtime.update_config({"gnss": {"enabled": False}})}
 
     return app
 

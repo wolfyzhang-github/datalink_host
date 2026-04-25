@@ -137,9 +137,9 @@
       <div class="col-sm-6 col-xl-2">
         <div class="card metric-card shadow-sm h-100">
           <div class="card-body">
-            <div class="text-secondary small">GPS</div>
-            <div class="metric-value" id="metric-gps">-</div>
-            <div class="small text-secondary" id="metric-gps-time">时间 -</div>
+            <div class="text-secondary small">GNSS</div>
+            <div class="metric-value" id="metric-gnss">-</div>
+            <div class="small text-secondary" id="metric-gnss-time">时间 -</div>
           </div>
         </div>
       </div>
@@ -567,40 +567,40 @@
 
               <div class="accordion-item">
                 <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-gps">
-                    GPS 时间
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-gnss">
+                    GNSS 时间
                   </button>
                 </h2>
-                <div id="section-gps" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                <div id="section-gnss" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
                   <div class="accordion-body">
                     <div class="form-check form-switch mb-3">
-                      <input id="gps-enabled" class="form-check-input" type="checkbox">
-                      <label class="form-check-label" for="gps-enabled">启用 GPS 时间</label>
+                      <input id="gnss-enabled" class="form-check-input" type="checkbox">
+                      <label class="form-check-label" for="gnss-enabled">启用 GNSS 时间</label>
                     </div>
-                    <div class="row g-3" id="gps-fields">
+                    <div class="row g-3" id="gnss-fields">
                       <div class="col-md-6">
-                        <label class="form-label" for="gps-port">串口</label>
-                        <input id="gps-port" class="form-control" type="text" list="gps-port-options">
-                        <datalist id="gps-port-options"></datalist>
+                        <label class="form-label" for="gnss-port">串口</label>
+                        <input id="gnss-port" class="form-control" type="text" list="gnss-port-options">
+                        <datalist id="gnss-port-options"></datalist>
                       </div>
                       <div class="col-md-6">
-                        <label class="form-label" for="gps-baudrate">波特率</label>
-                        <input id="gps-baudrate" class="form-control" type="number" min="1">
+                        <label class="form-label" for="gnss-baudrate">波特率</label>
+                        <input id="gnss-baudrate" class="form-control" type="number" min="1">
                       </div>
                       <div class="col-md-6">
-                        <label class="form-label" for="gps-mode">模式</label>
-                        <select id="gps-mode" class="form-select">
+                        <label class="form-label" for="gnss-mode">模式</label>
+                        <select id="gnss-mode" class="form-select">
                           <option value="debug">调试模式</option>
                           <option value="deploy">部署模式</option>
                         </select>
                       </div>
                       <div class="col-md-6">
-                        <label class="form-label" for="gps-poll">轮询间隔(秒)</label>
-                        <input id="gps-poll" class="form-control" type="number" min="0.01" step="0.01">
+                        <label class="form-label" for="gnss-poll">轮询间隔(秒)</label>
+                        <input id="gnss-poll" class="form-control" type="number" min="0.01" step="0.01">
                       </div>
                       <div class="col-md-6">
-                        <label class="form-label" for="gps-timestamp-interval">授时间隔(秒)</label>
-                        <input id="gps-timestamp-interval" class="form-control" type="number" min="0.001" step="0.001">
+                        <label class="form-label" for="gnss-timestamp-interval">授时等待超时(秒)</label>
+                        <input id="gnss-timestamp-interval" class="form-control" type="number" min="0.001" step="0.001">
                       </div>
                     </div>
                   </div>
@@ -655,8 +655,8 @@
       metricStorageQueue: document.getElementById("metric-storage-queue"),
       metricDatalink: document.getElementById("metric-datalink"),
       metricDatalinkQueue: document.getElementById("metric-datalink-queue"),
-      metricGps: document.getElementById("metric-gps"),
-      metricGpsTime: document.getElementById("metric-gps-time"),
+      metricGnss: document.getElementById("metric-gnss"),
+      metricGnssTime: document.getElementById("metric-gnss-time"),
       overviewStatusList: document.getElementById("overview-status-list"),
       overviewLastError: document.getElementById("overview-last-error"),
       overviewStorageError: document.getElementById("overview-storage-error"),
@@ -707,14 +707,14 @@
       captureEnabled: document.getElementById("capture-enabled"),
       captureFields: document.getElementById("capture-fields"),
       capturePath: document.getElementById("capture-path"),
-      gpsEnabled: document.getElementById("gps-enabled"),
-      gpsFields: document.getElementById("gps-fields"),
-      gpsPort: document.getElementById("gps-port"),
-      gpsPortOptions: document.getElementById("gps-port-options"),
-      gpsBaudrate: document.getElementById("gps-baudrate"),
-      gpsMode: document.getElementById("gps-mode"),
-      gpsPoll: document.getElementById("gps-poll"),
-      gpsTimestampInterval: document.getElementById("gps-timestamp-interval"),
+      gnssEnabled: document.getElementById("gnss-enabled"),
+      gnssFields: document.getElementById("gnss-fields"),
+      gnssPort: document.getElementById("gnss-port"),
+      gnssPortOptions: document.getElementById("gnss-port-options"),
+      gnssBaudrate: document.getElementById("gnss-baudrate"),
+      gnssMode: document.getElementById("gnss-mode"),
+      gnssPoll: document.getElementById("gnss-poll"),
+      gnssTimestampInterval: document.getElementById("gnss-timestamp-interval"),
     };
 
     function initCharts() {
@@ -796,7 +796,7 @@
       els.storageEnabled.addEventListener("change", updateFormState);
       els.datalinkEnabled.addEventListener("change", updateFormState);
       els.captureEnabled.addEventListener("change", updateFormState);
-      els.gpsEnabled.addEventListener("change", updateFormState);
+      els.gnssEnabled.addEventListener("change", updateFormState);
     }
 
     function formatNumber(value) {
@@ -813,6 +813,37 @@
         return "-";
       }
       return numeric >= 100 ? `${numeric.toFixed(0)} Hz` : `${numeric.toFixed(2)} Hz`;
+    }
+
+    function formatBytes(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) {
+        return "-";
+      }
+      const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+      let size = numeric;
+      let unitIndex = 0;
+      while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+      }
+      return unitIndex === 0 ? `${Math.round(size)} ${units[unitIndex]}` : `${size.toFixed(1)} ${units[unitIndex]}`;
+    }
+
+    function formatPercent(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return "-";
+      }
+      return `${numeric.toFixed(1)}%`;
+    }
+
+    function formatMeters(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return "-";
+      }
+      return `${numeric.toFixed(2)} m`;
     }
 
     function setAlert(message, tone = "secondary") {
@@ -908,7 +939,7 @@
       toggleFieldGroup(els.storageFields, els.storageEnabled.checked);
       toggleFieldGroup(els.datalinkFields, els.datalinkEnabled.checked);
       toggleFieldGroup(els.captureFields, els.captureEnabled.checked);
-      toggleFieldGroup(els.gpsFields, els.gpsEnabled.checked);
+      toggleFieldGroup(els.gnssFields, els.gnssEnabled.checked);
     }
 
     function toggleFieldGroup(container, enabled) {
@@ -925,7 +956,7 @@
       const storage = config.storage || {};
       const datalink = config.datalink || {};
       const capture = config.capture || {};
-      const gps = config.gps || {};
+      const gnss = config.gnss || {};
 
       els.data1Rate.value = processing.data1_rate ?? 100;
       els.data2Rate.value = processing.data2_rate ?? 10;
@@ -954,29 +985,29 @@
       els.sendData2.checked = Boolean(datalink.send_data2);
       els.captureEnabled.checked = Boolean(capture.enabled);
       els.capturePath.value = capture.path || "";
-      els.gpsEnabled.checked = Boolean(gps.enabled);
-      els.gpsPort.value = gps.port || "";
-      els.gpsBaudrate.value = gps.baudrate ?? 115200;
-      els.gpsMode.value = gps.mode || "debug";
-      els.gpsPoll.value = gps.poll_interval_seconds ?? 0.1;
-      els.gpsTimestampInterval.value = gps.timestamp_interval_seconds ?? 0.1;
+      els.gnssEnabled.checked = Boolean(gnss.enabled);
+      els.gnssPort.value = gnss.port || "";
+      els.gnssBaudrate.value = gnss.baudrate ?? 115200;
+      els.gnssMode.value = gnss.mode || "debug";
+      els.gnssPoll.value = gnss.poll_interval_seconds ?? 0.1;
+      els.gnssTimestampInterval.value = gnss.packet_timestamp_timeout_seconds ?? gnss.timestamp_interval_seconds ?? 1.0;
       updateFormState();
     }
 
-    async function refreshGpsPorts() {
+    async function refreshGnssPorts() {
       if (!state.baseUrl) {
         return;
       }
       try {
-        const ports = await apiRequest("/api/gps/ports");
-        els.gpsPortOptions.innerHTML = "";
+        const ports = await apiRequest("/api/gnss/ports");
+        els.gnssPortOptions.innerHTML = "";
         ports.forEach((port) => {
           const option = document.createElement("option");
           option.value = port;
-          els.gpsPortOptions.appendChild(option);
+          els.gnssPortOptions.appendChild(option);
         });
       } catch (error) {
-        console.warn("Failed to refresh GPS ports", error);
+        console.warn("Failed to refresh GNSS ports", error);
       }
     }
 
@@ -986,7 +1017,7 @@
       }
       const config = await apiRequest("/api/config");
       applyConfigToForm(config);
-      await refreshGpsPorts();
+      await refreshGnssPorts();
       setAlert("配置已从远程服务同步到当前页面。", "info");
     }
 
@@ -1031,13 +1062,13 @@
           enabled: els.captureEnabled.checked,
           path: els.capturePath.value.trim() || "./var/captures/session.dlhcap",
         },
-        gps: {
-          enabled: els.gpsEnabled.checked,
-          port: els.gpsPort.value.trim(),
-          baudrate: readNumber(els.gpsBaudrate, "GPS 波特率"),
-          mode: els.gpsMode.value,
-          poll_interval_seconds: readNumber(els.gpsPoll, "GPS 轮询间隔"),
-          timestamp_interval_seconds: readNumber(els.gpsTimestampInterval, "GPS 授时间隔"),
+        gnss: {
+          enabled: els.gnssEnabled.checked,
+          port: els.gnssPort.value.trim(),
+          baudrate: readNumber(els.gnssBaudrate, "GNSS 波特率"),
+          mode: els.gnssMode.value,
+          poll_interval_seconds: readNumber(els.gnssPoll, "GNSS 轮询间隔"),
+          packet_timestamp_timeout_seconds: readNumber(els.gnssTimestampInterval, "GNSS 授时等待超时"),
         },
       };
     }
@@ -1201,8 +1232,8 @@
       els.metricStorageQueue.textContent = formatNumber(status.storage_queue_depth);
       els.metricDatalink.textContent = status.datalink_connected ? "已连接" : (status.datalink_enabled ? "未连接" : "未启用");
       els.metricDatalinkQueue.textContent = formatNumber(status.datalink_publish_queue_depth);
-      els.metricGps.textContent = status.gps_connected ? "已连接" : (status.gps_enabled ? "未连接" : "未启用");
-      els.metricGpsTime.textContent = `时间 ${status.gps_last_timestamp || "-"}`;
+      els.metricGnss.textContent = status.gnss_connected ? "已连接" : (status.gnss_enabled ? "未连接" : "未启用");
+      els.metricGnssTime.textContent = `时间 ${status.gnss_last_timestamp || "-"}`;
 
       renderOverviewStatus(status);
       els.overviewLastError.textContent = status.last_error || "-";
@@ -1214,17 +1245,21 @@
     function renderOverviewStatus(status) {
       const rows = [
         ["控制连接", status.control_connected ? "已连接" : "未连接"],
+        ["基线长度", formatMeters(status.baseline_length_meters)],
         ["降采样1 采样率", formatRate(status.data1_rate)],
         ["降采样2 采样率", formatRate(status.data2_rate)],
         ["本地存储", status.storage_enabled ? "已启用" : "未启用"],
+        ["磁盘总容量", formatBytes(status.storage_disk_total_bytes)],
+        ["磁盘利用率", formatPercent(status.storage_disk_usage_percent)],
+        ["磁盘可用", formatBytes(status.storage_disk_free_bytes)],
         ["存储丢帧", formatNumber(status.storage_frames_dropped)],
         ["远传开关", status.datalink_enabled ? "已启用" : "未启用"],
         ["远传重连次数", formatNumber(status.datalink_reconnects)],
         ["远传发布丢帧", formatNumber(status.datalink_publish_frames_dropped)],
         ["抓包", status.capture_enabled ? "已启用" : "未启用"],
-        ["GPS 模式", status.gps_mode || "-"],
-        ["GPS 串口", status.gps_port || "-"],
-        ["GPS 回退", status.gps_fallback_active ? "是" : "否"],
+        ["GNSS 模式", status.gnss_mode || "-"],
+        ["GNSS 串口", status.gnss_port || "-"],
+        ["GNSS 回退", status.gnss_fallback_active ? "是" : "否"],
       ];
       els.overviewStatusList.innerHTML = rows.map(([label, value]) => (
         `<div class="list-group-item d-flex justify-content-between align-items-center">

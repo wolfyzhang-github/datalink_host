@@ -25,9 +25,8 @@ from datalink_host.ingest.data_server import TcpDataServer
 from datalink_host.models.messages import ChannelFrame, ProcessedFrame, RuntimeSnapshot, TcpPacket
 from datalink_host.processing.pipeline import ProcessingPipeline
 from datalink_host.services.background_sink import BackgroundFrameSink
-from datalink_host.services.gps_time import (
-    GpsStatus,
-    GpsTimeService,
+from datalink_host.services.gnss_time import (
+    GnssTimeService,
     format_timestamp_iso_utc,
     format_timestamp_us,
 )
@@ -55,11 +54,9 @@ LENGTH_FIELD_FORMATS = {"uint", "float64"}
 LENGTH_FIELD_UNITS = {"bytes", "values"}
 BYTE_ORDERS = {"little", "big"}
 CHANNEL_LAYOUTS = {"interleaved", "channel-major"}
-GPS_MODES = {"debug", "deploy"}
+GNSS_MODES = {"debug", "deploy"}
 TIMESTAMP_RESOLUTION_LOG_SAMPLE_LIMIT = 12
 TIMESTAMP_RESOLUTION_LOG_PERIOD_SECONDS = 5.0
-TIMESTAMP_RESYNC_MIN_THRESHOLD_US = 2_000_000
-TIMESTAMP_RESYNC_MULTIPLIER = 5
 
 
 class RuntimeService:
@@ -84,7 +81,7 @@ class RuntimeService:
             queue_wait_warning_ms=DATALINK_SINK_QUEUE_WAIT_WARNING_MS,
             handle_warning_ms=DATALINK_SINK_HANDLE_WARNING_MS,
         )
-        self._gps_time = GpsTimeService(settings.gps)
+        self._gnss_time = GnssTimeService(settings.gnss)
         self._capture = PacketCaptureWriter(settings.capture.path) if settings.capture.enabled else None
         self._queue: queue.Queue[ChannelFrame] = queue.Queue(maxsize=32)
         self._lock = threading.Lock()
@@ -98,6 +95,7 @@ class RuntimeService:
             source_sample_rate=None,
             data1_rate=settings.processing.data1_rate,
             data2_rate=settings.processing.data2_rate,
+            baseline_length_meters=settings.processing.baseline_length_meters,
             queue_depth=0,
             datalink_enabled=settings.datalink.enabled,
             datalink_connected=False,
@@ -112,15 +110,19 @@ class RuntimeService:
             storage_queue_depth=0,
             storage_frames_dropped=0,
             storage_last_error=None,
+            storage_disk_total_bytes=None,
+            storage_disk_used_bytes=None,
+            storage_disk_free_bytes=None,
+            storage_disk_usage_percent=None,
             capture_enabled=settings.capture.enabled,
-            gps_enabled=settings.gps.enabled,
-            gps_connected=False,
-            gps_mode=settings.gps.mode,
-            gps_port=settings.gps.port,
-            gps_baudrate=settings.gps.baudrate,
-            gps_last_timestamp=None,
-            gps_last_error=None,
-            gps_fallback_active=False,
+            gnss_enabled=settings.gnss.enabled,
+            gnss_connected=False,
+            gnss_mode=settings.gnss.mode,
+            gnss_port=settings.gnss.port,
+            gnss_baudrate=settings.gnss.baudrate,
+            gnss_last_timestamp=None,
+            gnss_last_error=None,
+            gnss_fallback_active=False,
             latest_raw=None,
             latest_unwrapped=None,
             latest_data1=None,
@@ -141,7 +143,6 @@ class RuntimeService:
         self._frames_processed = 0
         self._last_frame_start_us: int | None = None
         self._last_frame_duration_us: int | None = None
-        self._gps_timestamp_anchor_us: int | None = None
         self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
         self._timestamp_resolution_count = 0
         self._last_timestamp_resolution_log_monotonic = 0.0
@@ -170,7 +171,7 @@ class RuntimeService:
             return
         self._runtime_started = True
         self._stop_event.clear()
-        self._gps_time.start()
+        self._gnss_time.start()
         self._storage_sink.start()
         self._datalink_sink.start()
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
@@ -188,7 +189,7 @@ class RuntimeService:
         self._processor_thread.join(timeout=2.0)
         self._storage_sink.stop()
         self._datalink_sink.stop()
-        self._gps_time.stop()
+        self._gnss_time.stop()
         self._storage.close()
         self._datalink.close()
         if self._capture is not None:
@@ -197,8 +198,8 @@ class RuntimeService:
     def is_processing_active(self) -> bool:
         return self._data_server_active
 
-    def gps_ports(self) -> list[str]:
-        return self._gps_time.available_ports()
+    def gnss_ports(self) -> list[str]:
+        return self._gnss_time.available_ports()
 
     def resume_processing(self) -> None:
         if self._data_server_active:
@@ -224,14 +225,15 @@ class RuntimeService:
 
     def snapshot(self) -> RuntimeSnapshot:
         storage_stats = self._storage_sink.stats()
+        storage_disk_usage = self._storage.disk_usage()
         datalink_publish_stats = self._datalink_sink.stats()
         datalink_stats = self._datalink.stats()
-        gps_status = self._gps_time.status()
+        gnss_status = self._gnss_time.status()
         with self._lock:
-            gps_last_timestamp = self._snapshot.gps_last_timestamp
-            if gps_last_timestamp is None and gps_status.last_timestamp_us is not None:
-                gps_last_timestamp = format_timestamp_us(gps_status.last_timestamp_us)
-            gps_last_error = self._snapshot.gps_last_error or gps_status.last_error
+            gnss_last_timestamp = self._snapshot.gnss_last_timestamp
+            if gnss_last_timestamp is None and gnss_status.last_timestamp_us is not None:
+                gnss_last_timestamp = format_timestamp_us(gnss_status.last_timestamp_us)
+            gnss_last_error = self._snapshot.gnss_last_error or gnss_status.last_error
             return replace(
                 self._snapshot,
                 datalink_connected=datalink_stats.connected,
@@ -245,13 +247,25 @@ class RuntimeService:
                 storage_queue_depth=storage_stats.queue_depth,
                 storage_frames_dropped=storage_stats.frames_dropped,
                 storage_last_error=storage_stats.last_error,
-                gps_enabled=self._settings.gps.enabled,
-                gps_connected=gps_status.connected,
-                gps_mode=self._settings.gps.mode,
-                gps_port=self._settings.gps.port,
-                gps_baudrate=self._settings.gps.baudrate,
-                gps_last_timestamp=gps_last_timestamp,
-                gps_last_error=gps_last_error,
+                storage_disk_total_bytes=(
+                    None if storage_disk_usage is None else storage_disk_usage.total_bytes
+                ),
+                storage_disk_used_bytes=(
+                    None if storage_disk_usage is None else storage_disk_usage.used_bytes
+                ),
+                storage_disk_free_bytes=(
+                    None if storage_disk_usage is None else storage_disk_usage.free_bytes
+                ),
+                storage_disk_usage_percent=(
+                    None if storage_disk_usage is None else storage_disk_usage.usage_percent
+                ),
+                gnss_enabled=self._settings.gnss.enabled,
+                gnss_connected=gnss_status.connected,
+                gnss_mode=self._settings.gnss.mode,
+                gnss_port=self._settings.gnss.port,
+                gnss_baudrate=self._settings.gnss.baudrate,
+                gnss_last_timestamp=gnss_last_timestamp,
+                gnss_last_error=gnss_last_error,
             )
 
     def current_config(self) -> dict[str, Any]:
@@ -261,6 +275,7 @@ class RuntimeService:
                     "data1_rate": self._settings.processing.data1_rate,
                     "data2_rate": self._settings.processing.data2_rate,
                     "enable_phase_unwrap": self._settings.processing.enable_phase_unwrap,
+                    "baseline_length_meters": self._settings.processing.baseline_length_meters,
                 },
                 "protocol": {
                     "frame_header": self._settings.protocol.frame_header,
@@ -296,13 +311,14 @@ class RuntimeService:
                     "ack_required": self._settings.datalink.ack_required,
                     "send_data2": self._settings.datalink.send_data2,
                 },
-                "gps": {
-                    "enabled": self._settings.gps.enabled,
-                    "port": self._settings.gps.port,
-                    "baudrate": self._settings.gps.baudrate,
-                    "mode": self._settings.gps.mode,
-                    "poll_interval_seconds": self._settings.gps.poll_interval_seconds,
-                    "timestamp_interval_seconds": self._settings.gps.timestamp_interval_seconds,
+                "gnss": {
+                    "enabled": self._settings.gnss.enabled,
+                    "port": self._settings.gnss.port,
+                    "baudrate": self._settings.gnss.baudrate,
+                    "mode": self._settings.gnss.mode,
+                    "poll_interval_seconds": self._settings.gnss.poll_interval_seconds,
+                    "timestamp_interval_seconds": self._settings.gnss.timestamp_interval_seconds,
+                    "packet_timestamp_timeout_seconds": self._settings.gnss.packet_timestamp_timeout_seconds,
                 },
                 "capture": {
                     "enabled": self._settings.capture.enabled,
@@ -377,7 +393,7 @@ class RuntimeService:
             data_server = payload.get("data_server", {})
             storage = payload.get("storage", {})
             datalink = payload.get("datalink", {})
-            gps = payload.get("gps", {})
+            gnss = payload.get("gnss", {})
             capture = payload.get("capture", {})
             restart_data_server = False
 
@@ -399,6 +415,17 @@ class RuntimeService:
             if "enable_phase_unwrap" in processing:
                 self._settings.processing.enable_phase_unwrap = bool(processing["enable_phase_unwrap"])
                 self._pipeline.reset()
+
+            if "baseline_length_meters" in processing:
+                baseline_length = processing["baseline_length_meters"]
+                if baseline_length in (None, ""):
+                    self._settings.processing.baseline_length_meters = None
+                else:
+                    self._settings.processing.baseline_length_meters = parse_positive_float(
+                        baseline_length,
+                        "processing.baseline_length_meters",
+                    )
+                self._snapshot.baseline_length_meters = self._settings.processing.baseline_length_meters
 
             if protocol:
                 protocol_changed = False
@@ -521,51 +548,35 @@ class RuntimeService:
                 self._snapshot.datalink_enabled = self._settings.datalink.enabled
                 self._datalink.update_settings(self._settings.datalink, self._settings.storage)
 
-            if gps:
-                gps_settings_changed = False
-                if "enabled" in gps:
-                    enabled = bool(gps["enabled"])
-                    gps_settings_changed = gps_settings_changed or enabled != self._settings.gps.enabled
-                    self._settings.gps.enabled = enabled
-                if "port" in gps:
-                    port = str(gps["port"])
-                    gps_settings_changed = gps_settings_changed or port != self._settings.gps.port
-                    self._settings.gps.port = port
-                if "baudrate" in gps:
-                    baudrate = parse_positive_int(gps["baudrate"], "gps.baudrate")
-                    gps_settings_changed = gps_settings_changed or baudrate != self._settings.gps.baudrate
-                    self._settings.gps.baudrate = baudrate
-                if "mode" in gps:
-                    mode = parse_choice(gps["mode"], "gps.mode", GPS_MODES)
-                    gps_settings_changed = gps_settings_changed or mode != self._settings.gps.mode
-                    self._settings.gps.mode = mode
-                if "poll_interval_seconds" in gps:
-                    poll_interval_seconds = parse_positive_float(
-                        gps["poll_interval_seconds"],
-                        "gps.poll_interval_seconds",
+            if gnss:
+                if "enabled" in gnss:
+                    self._settings.gnss.enabled = bool(gnss["enabled"])
+                if "port" in gnss:
+                    self._settings.gnss.port = str(gnss["port"])
+                if "baudrate" in gnss:
+                    self._settings.gnss.baudrate = parse_positive_int(gnss["baudrate"], "gnss.baudrate")
+                if "mode" in gnss:
+                    self._settings.gnss.mode = parse_choice(gnss["mode"], "gnss.mode", GNSS_MODES)
+                if "poll_interval_seconds" in gnss:
+                    self._settings.gnss.poll_interval_seconds = parse_positive_float(
+                        gnss["poll_interval_seconds"],
+                        "gnss.poll_interval_seconds",
                     )
-                    gps_settings_changed = (
-                        gps_settings_changed
-                        or poll_interval_seconds != self._settings.gps.poll_interval_seconds
+                if "timestamp_interval_seconds" in gnss:
+                    self._settings.gnss.timestamp_interval_seconds = parse_positive_float(
+                        gnss["timestamp_interval_seconds"],
+                        "gnss.timestamp_interval_seconds",
                     )
-                    self._settings.gps.poll_interval_seconds = poll_interval_seconds
-                if "timestamp_interval_seconds" in gps:
-                    timestamp_interval_seconds = parse_positive_float(
-                        gps["timestamp_interval_seconds"],
-                        "gps.timestamp_interval_seconds",
+                if "packet_timestamp_timeout_seconds" in gnss:
+                    self._settings.gnss.packet_timestamp_timeout_seconds = parse_positive_float(
+                        gnss["packet_timestamp_timeout_seconds"],
+                        "gnss.packet_timestamp_timeout_seconds",
                     )
-                    gps_settings_changed = (
-                        gps_settings_changed
-                        or timestamp_interval_seconds != self._settings.gps.timestamp_interval_seconds
-                    )
-                    self._settings.gps.timestamp_interval_seconds = timestamp_interval_seconds
-                self._gps_time.update_settings(deepcopy(self._settings.gps))
-                if gps_settings_changed:
-                    self._gps_timestamp_anchor_us = None
-                self._snapshot.gps_enabled = self._settings.gps.enabled
-                self._snapshot.gps_mode = self._settings.gps.mode
-                self._snapshot.gps_port = self._settings.gps.port
-                self._snapshot.gps_baudrate = self._settings.gps.baudrate
+                self._gnss_time.update_settings(deepcopy(self._settings.gnss))
+                self._snapshot.gnss_enabled = self._settings.gnss.enabled
+                self._snapshot.gnss_mode = self._settings.gnss.mode
+                self._snapshot.gnss_port = self._settings.gnss.port
+                self._snapshot.gnss_baudrate = self._settings.gnss.baudrate
 
             if capture:
                 if "enabled" in capture:
@@ -609,7 +620,7 @@ class RuntimeService:
             )
 
     def _on_frame(self, frame: ChannelFrame) -> None:
-        timestamp_us, used_fallback, gps_error = self._resolve_frame_timestamp(frame)
+        timestamp_us, used_fallback, gnss_error = self._resolve_frame_timestamp(frame)
         frame.timestamp_us = timestamp_us
         try:
             self._queue.put_nowait(frame)
@@ -632,8 +643,8 @@ class RuntimeService:
             if timestamp_us is not None:
                 self._last_frame_start_us = timestamp_us
                 self._last_frame_duration_us = self._frame_duration_us(frame)
-            self._snapshot.gps_fallback_active = used_fallback
-            self._snapshot.gps_last_error = gps_error
+            self._snapshot.gnss_fallback_active = used_fallback
+            self._snapshot.gnss_last_error = gnss_error
             self._snapshot.packets_received += 1
             self._snapshot.source_sample_rate = frame.sample_rate
             self._snapshot.queue_depth = self._queue.qsize()
@@ -648,7 +659,7 @@ class RuntimeService:
     def _resolve_frame_timestamp(self, frame: ChannelFrame) -> tuple[int | None, bool, str | None]:
         sample_count = frame.channels.shape[1]
         frame_duration_us = self._frame_duration_us(frame)
-        if not self._settings.gps.enabled:
+        if not self._settings.gnss.enabled:
             timestamp_us = self._start_time_from_reference_timestamp(
                 reference_timestamp_us=int(round(frame.received_at * 1_000_000)),
                 frame_duration_us=frame_duration_us,
@@ -656,8 +667,8 @@ class RuntimeService:
             self._log_timestamp_resolution(
                 source="host_received_at",
                 assigned_timestamp_us=timestamp_us,
-                gps_raw_timestamp_us=None,
-                gps_now_timestamp_us=None,
+                gnss_raw_timestamp_us=None,
+                gnss_now_timestamp_us=None,
                 last_frame_start_us=None,
                 expected_next_us=None,
                 frame_duration_us=frame_duration_us,
@@ -665,45 +676,34 @@ class RuntimeService:
                 sample_count=sample_count,
                 used_fallback=False,
                 error=None,
-                gps_skew_us=None,
+                gnss_skew_us=None,
             )
             return timestamp_us, False, None
 
-        gps_status = self._gps_time.status()
-        gps_now_us = self._gps_time.current_time_us()
+        gnss_status = self._gnss_time.status()
+        timeout_seconds = max(
+            self._settings.gnss.packet_timestamp_timeout_seconds,
+            self._settings.gnss.serial_timeout_seconds,
+        )
+        gnss_packet_end_us = self._gnss_time.wait_for_next_timestamp_us(timeout_seconds)
         with self._lock:
             last_frame_start_us = self._last_frame_start_us
             last_frame_duration_us = self._last_frame_duration_us
-            gps_timestamp_anchor_us = self._gps_timestamp_anchor_us
         expected_next_us = (
             None
             if last_frame_start_us is None or last_frame_duration_us is None
             else last_frame_start_us + last_frame_duration_us
         )
-        aligned_gps_timestamp_us, resynced_to_current_gps, gps_skew_us = self._resolve_gps_aligned_timestamp(
-            gps_status=gps_status,
-            last_frame_start_us=last_frame_start_us,
-            last_frame_duration_us=last_frame_duration_us,
-            frame_duration_us=frame_duration_us,
-            gps_timestamp_anchor_us=gps_timestamp_anchor_us,
-            timestamp_interval_seconds=self._settings.gps.timestamp_interval_seconds,
-            gps_now_us=gps_now_us,
-        )
-        if aligned_gps_timestamp_us is not None:
-            if gps_status.last_timestamp_us is not None and gps_timestamp_anchor_us is None:
-                with self._lock:
-                    if self._gps_timestamp_anchor_us is None:
-                        self._gps_timestamp_anchor_us = gps_status.last_timestamp_us
-            source = "gps_predicted_sequence"
-            if last_frame_start_us is None or last_frame_duration_us is None:
-                source = "gps_current_time" if gps_now_us is not None else "gps_raw_time"
-            elif resynced_to_current_gps:
-                source = "gps_resync_to_current_time"
+        if gnss_packet_end_us is not None:
+            timestamp_us = self._start_time_from_reference_timestamp(
+                reference_timestamp_us=gnss_packet_end_us,
+                frame_duration_us=frame_duration_us,
+            )
             self._log_timestamp_resolution(
-                source=source,
-                assigned_timestamp_us=aligned_gps_timestamp_us,
-                gps_raw_timestamp_us=gps_status.last_timestamp_us,
-                gps_now_timestamp_us=gps_now_us,
+                source="gnss_packet_end_time",
+                assigned_timestamp_us=timestamp_us,
+                gnss_raw_timestamp_us=gnss_packet_end_us,
+                gnss_now_timestamp_us=None,
                 last_frame_start_us=last_frame_start_us,
                 expected_next_us=expected_next_us,
                 frame_duration_us=frame_duration_us,
@@ -711,18 +711,22 @@ class RuntimeService:
                 sample_count=sample_count,
                 used_fallback=False,
                 error=None,
-                gps_skew_us=gps_skew_us,
+                gnss_skew_us=None,
             )
-            return aligned_gps_timestamp_us, False, None
+            return timestamp_us, False, None
 
         if last_frame_start_us is not None and last_frame_duration_us is not None:
             timestamp_us = last_frame_start_us + last_frame_duration_us
-            error = gps_status.last_error or "GPS unavailable; using previous frame timestamp fallback"
+            error = (
+                gnss_status.last_error
+                or f"GNSS packet timestamp did not arrive within {timeout_seconds:.3f}s; "
+                "using previous frame timestamp fallback"
+            )
             self._log_timestamp_resolution(
                 source="previous_frame_fallback",
                 assigned_timestamp_us=timestamp_us,
-                gps_raw_timestamp_us=gps_status.last_timestamp_us,
-                gps_now_timestamp_us=gps_now_us,
+                gnss_raw_timestamp_us=gnss_status.last_timestamp_us,
+                gnss_now_timestamp_us=None,
                 last_frame_start_us=last_frame_start_us,
                 expected_next_us=expected_next_us,
                 frame_duration_us=frame_duration_us,
@@ -730,16 +734,18 @@ class RuntimeService:
                 sample_count=sample_count,
                 used_fallback=True,
                 error=error,
-                gps_skew_us=None,
+                gnss_skew_us=None,
             )
             return (timestamp_us, True, error)
 
-        error = gps_status.last_error or "GPS unavailable and no fallback timestamp is available"
+        error = gnss_status.last_error or (
+            f"GNSS packet timestamp did not arrive within {timeout_seconds:.3f}s and no fallback timestamp is available"
+        )
         self._log_timestamp_resolution(
-            source="gps_unavailable",
+            source="gnss_unavailable",
             assigned_timestamp_us=None,
-            gps_raw_timestamp_us=gps_status.last_timestamp_us,
-            gps_now_timestamp_us=gps_now_us,
+            gnss_raw_timestamp_us=gnss_status.last_timestamp_us,
+            gnss_now_timestamp_us=None,
             last_frame_start_us=last_frame_start_us,
             expected_next_us=expected_next_us,
             frame_duration_us=frame_duration_us,
@@ -747,7 +753,7 @@ class RuntimeService:
             sample_count=sample_count,
             used_fallback=False,
             error=error,
-            gps_skew_us=None,
+            gnss_skew_us=None,
         )
         return None, False, error
 
@@ -770,82 +776,13 @@ class RuntimeService:
             return reference_timestamp_us
         return max(reference_timestamp_us - frame_duration_us, 0)
 
-    @staticmethod
-    def _resolve_gps_aligned_timestamp(
-        *,
-        gps_status: GpsStatus,
-        last_frame_start_us: int | None,
-        last_frame_duration_us: int | None,
-        frame_duration_us: int | None,
-        gps_timestamp_anchor_us: int | None,
-        timestamp_interval_seconds: float,
-        gps_now_us: int | None,
-    ) -> tuple[int | None, bool, int | None]:
-        if gps_status.last_timestamp_us is None and gps_now_us is None:
-            return None, False, None
-        interval_us = max(int(round(timestamp_interval_seconds * 1_000_000)), 1)
-        cadence_anchor_us = gps_timestamp_anchor_us or gps_status.last_timestamp_us or gps_now_us
-        if cadence_anchor_us is None:
-            return None, False, None
-        if last_frame_start_us is None or last_frame_duration_us is None:
-            base_timestamp_us = gps_now_us or gps_status.last_timestamp_us
-            if base_timestamp_us is None:
-                return None, False, None
-            snapped_reference_us = RuntimeService._snap_timestamp_to_cadence(
-                timestamp_us=base_timestamp_us,
-                cadence_anchor_us=cadence_anchor_us,
-                interval_us=interval_us,
-            )
-            return RuntimeService._start_time_from_reference_timestamp(
-                reference_timestamp_us=snapped_reference_us,
-                frame_duration_us=frame_duration_us,
-            ), False, None
-        expected_next_us = last_frame_start_us + last_frame_duration_us
-        if gps_now_us is not None:
-            snapped_current_gps_us = RuntimeService._snap_timestamp_to_cadence(
-                timestamp_us=gps_now_us,
-                cadence_anchor_us=cadence_anchor_us,
-                interval_us=interval_us,
-            )
-            aligned_current_start_us = RuntimeService._start_time_from_reference_timestamp(
-                reference_timestamp_us=snapped_current_gps_us,
-                frame_duration_us=frame_duration_us,
-            )
-            if aligned_current_start_us is None:
-                return None, False, None
-            gps_skew_us = aligned_current_start_us - expected_next_us
-            resync_threshold_us = max(
-                interval_us * TIMESTAMP_RESYNC_MULTIPLIER,
-                last_frame_duration_us * TIMESTAMP_RESYNC_MULTIPLIER,
-                (frame_duration_us or 0) * TIMESTAMP_RESYNC_MULTIPLIER,
-                TIMESTAMP_RESYNC_MIN_THRESHOLD_US,
-            )
-            if gps_skew_us >= resync_threshold_us and aligned_current_start_us > last_frame_start_us:
-                return aligned_current_start_us, True, gps_skew_us
-        snapped_next_us = RuntimeService._snap_timestamp_to_cadence(
-            timestamp_us=expected_next_us,
-            cadence_anchor_us=cadence_anchor_us,
-            interval_us=interval_us,
-        )
-        if snapped_next_us <= last_frame_start_us:
-            snapped_next_us = expected_next_us
-        return snapped_next_us, False, None
-
-    @staticmethod
-    def _snap_timestamp_to_cadence(*, timestamp_us: int, cadence_anchor_us: int, interval_us: int) -> int:
-        if interval_us <= 0:
-            return timestamp_us
-        offset_us = timestamp_us - cadence_anchor_us
-        steps = int(round(offset_us / interval_us))
-        return cadence_anchor_us + (steps * interval_us)
-
     def _log_timestamp_resolution(
         self,
         *,
         source: str,
         assigned_timestamp_us: int | None,
-        gps_raw_timestamp_us: int | None,
-        gps_now_timestamp_us: int | None,
+        gnss_raw_timestamp_us: int | None,
+        gnss_now_timestamp_us: int | None,
         last_frame_start_us: int | None,
         expected_next_us: int | None,
         frame_duration_us: int | None,
@@ -853,7 +790,7 @@ class RuntimeService:
         sample_count: int,
         used_fallback: bool,
         error: str | None,
-        gps_skew_us: int | None,
+        gnss_skew_us: int | None,
     ) -> None:
         self._timestamp_resolution_count += 1
         now_monotonic = time.monotonic()
@@ -861,28 +798,28 @@ class RuntimeService:
             self._timestamp_resolution_count <= TIMESTAMP_RESOLUTION_LOG_SAMPLE_LIMIT
             or used_fallback
             or error is not None
-            or source == "gps_resync_to_current_time"
+            or source == "gnss_resync_to_current_time"
             or (now_monotonic - self._last_timestamp_resolution_log_monotonic) >= TIMESTAMP_RESOLUTION_LOG_PERIOD_SECONDS
         )
         if not should_log:
             return
         self._last_timestamp_resolution_log_monotonic = now_monotonic
         LOGGER.info(
-            "Frame timestamp resolved: source=%s assigned_utc=%s gps_raw_utc=%s gps_now_utc=%s "
-            "last_frame_start_utc=%s expected_next_utc=%s frame_duration_ms=%s gps_skew_ms=%s "
+            "Frame timestamp resolved: source=%s assigned_utc=%s gnss_raw_utc=%s gnss_now_utc=%s "
+            "last_frame_start_utc=%s expected_next_utc=%s frame_duration_ms=%s gnss_skew_ms=%s "
             "sample_rate_hz=%.3f sample_count=%s fallback=%s error=%s decision_index=%s",
             source,
             format_timestamp_iso_utc(assigned_timestamp_us),
-            format_timestamp_iso_utc(gps_raw_timestamp_us),
-            format_timestamp_iso_utc(gps_now_timestamp_us),
+            format_timestamp_iso_utc(gnss_raw_timestamp_us),
+            format_timestamp_iso_utc(gnss_now_timestamp_us),
             format_timestamp_iso_utc(last_frame_start_us),
             format_timestamp_iso_utc(expected_next_us),
             "-"
             if frame_duration_us is None
             else f"{frame_duration_us / 1_000:.3f}",
             "-"
-            if gps_skew_us is None
-            else f"{gps_skew_us / 1_000:.3f}",
+            if gnss_skew_us is None
+            else f"{gnss_skew_us / 1_000:.3f}",
             sample_rate,
             sample_count,
             "yes" if used_fallback else "no",
@@ -964,6 +901,10 @@ class RuntimeService:
     def _set_data_connected(self, connected: bool) -> None:
         if not connected:
             self._pipeline.reset()
+        else:
+            dropped = self._gnss_time.clear_pending_timestamps()
+            if dropped:
+                LOGGER.info("Cleared %s pending GNSS timestamp events when data connection opened", dropped)
         with self._lock:
             self._snapshot.data_connected = connected
             self._snapshot.updated_at = time.time()
@@ -1000,10 +941,15 @@ class RuntimeService:
                     "source_sample_rate": snapshot.source_sample_rate,
                     "data1_rate": snapshot.data1_rate,
                     "data2_rate": snapshot.data2_rate,
+                    "baseline_length_meters": snapshot.baseline_length_meters,
                     "storage_enabled": snapshot.storage_enabled,
                     "storage_queue_depth": snapshot.storage_queue_depth,
                     "storage_frames_dropped": snapshot.storage_frames_dropped,
                     "storage_last_error": snapshot.storage_last_error,
+                    "storage_disk_total_bytes": snapshot.storage_disk_total_bytes,
+                    "storage_disk_used_bytes": snapshot.storage_disk_used_bytes,
+                    "storage_disk_free_bytes": snapshot.storage_disk_free_bytes,
+                    "storage_disk_usage_percent": snapshot.storage_disk_usage_percent,
                     "datalink_enabled": snapshot.datalink_enabled,
                     "datalink_connected": snapshot.datalink_connected,
                     "datalink_packets_sent": snapshot.datalink_packets_sent,
@@ -1014,14 +960,14 @@ class RuntimeService:
                     "datalink_publish_frames_dropped": snapshot.datalink_publish_frames_dropped,
                     "datalink_publish_last_error": snapshot.datalink_publish_last_error,
                     "capture_enabled": snapshot.capture_enabled,
-                    "gps_enabled": snapshot.gps_enabled,
-                    "gps_connected": snapshot.gps_connected,
-                    "gps_mode": snapshot.gps_mode,
-                    "gps_port": snapshot.gps_port,
-                    "gps_baudrate": snapshot.gps_baudrate,
-                    "gps_last_timestamp": snapshot.gps_last_timestamp,
-                    "gps_last_error": snapshot.gps_last_error,
-                    "gps_fallback_active": snapshot.gps_fallback_active,
+                    "gnss_enabled": snapshot.gnss_enabled,
+                    "gnss_connected": snapshot.gnss_connected,
+                    "gnss_mode": snapshot.gnss_mode,
+                    "gnss_port": snapshot.gnss_port,
+                    "gnss_baudrate": snapshot.gnss_baudrate,
+                    "gnss_last_timestamp": snapshot.gnss_last_timestamp,
+                    "gnss_last_error": snapshot.gnss_last_error,
+                    "gnss_fallback_active": snapshot.gnss_fallback_active,
                     "last_error": snapshot.last_error,
                 },
             }
@@ -1039,8 +985,8 @@ class RuntimeService:
                 config_payload.setdefault("storage", {})["enabled"] = bool(payload["storage_enabled"])
             if "datalink_enabled" in payload:
                 config_payload.setdefault("datalink", {})["enabled"] = bool(payload["datalink_enabled"])
-            if "gps_enabled" in payload:
-                config_payload.setdefault("gps", {})["enabled"] = bool(payload["gps_enabled"])
+            if "gnss_enabled" in payload:
+                config_payload.setdefault("gnss", {})["enabled"] = bool(payload["gnss_enabled"])
             return {"status": "ok", "payload": self.update_config(config_payload)}
 
         raise ValueError(f"Unsupported control message type: {message_type}")

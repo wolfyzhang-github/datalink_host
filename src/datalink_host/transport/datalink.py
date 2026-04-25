@@ -28,6 +28,7 @@ DEFAULT_DATALINK_PACKET_SIZE = 512
 MIN_MSEED_RECORD_LENGTH = 256
 MAX_MSEED_RECORD_LENGTH = 4096
 MAX_MSEED_SEQUENCE_NUMBER = 999999
+DATALINK_PUBLISH_CHANNELS = 6
 PACKETSIZE_PATTERN = re.compile(r"PACKETSIZE(?:\s*[:=]\s*|\s+)(\d+)")
 
 
@@ -123,7 +124,8 @@ class DataLinkPublisher:
         for group_name, channels, sample_rate in outputs:
             if sample_rate <= 0:
                 continue
-            for channel_index in range(channels.shape[0]):
+            publish_channels = min(channels.shape[0], DATALINK_PUBLISH_CHANNELS)
+            for channel_index in range(publish_channels):
                 packets = self._serialize_channel_packets(
                     group_name=group_name,
                     channel_index=channel_index,

@@ -58,6 +58,7 @@ class RuntimeSnapshot:
     source_sample_rate: float | None
     data1_rate: float
     data2_rate: float
+    baseline_length_meters: float | None
     queue_depth: int
     datalink_enabled: bool
     datalink_connected: bool
@@ -72,15 +73,19 @@ class RuntimeSnapshot:
     storage_queue_depth: int
     storage_frames_dropped: int
     storage_last_error: str | None
+    storage_disk_total_bytes: int | None
+    storage_disk_used_bytes: int | None
+    storage_disk_free_bytes: int | None
+    storage_disk_usage_percent: float | None
     capture_enabled: bool
-    gps_enabled: bool
-    gps_connected: bool
-    gps_mode: str
-    gps_port: str
-    gps_baudrate: int
-    gps_last_timestamp: str | None
-    gps_last_error: str | None
-    gps_fallback_active: bool
+    gnss_enabled: bool
+    gnss_connected: bool
+    gnss_mode: str
+    gnss_port: str
+    gnss_baudrate: int
+    gnss_last_timestamp: str | None
+    gnss_last_error: str | None
+    gnss_fallback_active: bool
     latest_raw: np.ndarray | None
     latest_unwrapped: np.ndarray | None
     latest_data1: np.ndarray | None
