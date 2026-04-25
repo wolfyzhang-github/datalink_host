@@ -15,8 +15,6 @@ from datalink_host.core.config import GnssSettings
 
 
 LOGGER = logging.getLogger(__name__)
-GNSS_TIMESTAMP_LOG_SAMPLE_LIMIT = 8
-GNSS_TIMESTAMP_LOG_PERIOD_SECONDS = 5.0
 GNSS_HOST_SKEW_WARNING_SECONDS = 2.0
 _DEBUG_PATTERN = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2}) (?P<fraction>\d{9})$"
@@ -106,8 +104,7 @@ class GnssTimeService:
         self._timestamp_events: deque[int] = deque()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._timestamps_seen = 0
-        self._last_timestamp_log_monotonic = 0.0
+        self._host_skew_warning_active = False
 
     def start(self) -> None:
         with self._lock:
@@ -237,13 +234,6 @@ class GnssTimeService:
             if settings.mode == "debug" and now >= next_poll_at:
                 conn.write((settings.command + "\r\n").encode("ascii"))
                 conn.flush()
-                if self._timestamps_seen < GNSS_TIMESTAMP_LOG_SAMPLE_LIMIT:
-                    LOGGER.info(
-                        "GNSS poll command sent: port=%s command=%r next_poll_interval_s=%.3f",
-                        settings.port,
-                        settings.command,
-                        max(settings.poll_interval_seconds, 0.01),
-                    )
                 next_poll_at = now + max(settings.poll_interval_seconds, 0.01)
 
             raw_line = conn.readline()
@@ -257,11 +247,10 @@ class GnssTimeService:
                 LOGGER.warning("Failed to parse GNSS timestamp: raw=%r error=%s", raw_value, exc)
                 continue
             anchor_timestamp_us = self._record_timestamp(timestamp_us)
-            self._maybe_log_timestamp(
+            self._warn_on_host_skew(
                 raw_value=raw_value,
                 parsed_timestamp_us=timestamp_us,
                 anchor_timestamp_us=anchor_timestamp_us,
-                recorded_at_monotonic=now,
             )
 
     def _snapshot_settings(self) -> GnssSettings:
@@ -308,31 +297,27 @@ class GnssTimeService:
             self._timestamp_condition.notify_all()
         return anchor_timestamp_us
 
-    def _maybe_log_timestamp(
+    def _warn_on_host_skew(
         self,
         *,
         raw_value: str,
         parsed_timestamp_us: int,
         anchor_timestamp_us: int,
-        recorded_at_monotonic: float,
     ) -> None:
-        self._timestamps_seen += 1
         host_timestamp_us = int(round(time.time() * 1_000_000))
         host_delta_ms = (parsed_timestamp_us - host_timestamp_us) / 1_000
-        should_log = (
-            self._timestamps_seen <= GNSS_TIMESTAMP_LOG_SAMPLE_LIMIT
-            or abs(host_delta_ms) >= (GNSS_HOST_SKEW_WARNING_SECONDS * 1_000)
-            or (recorded_at_monotonic - self._last_timestamp_log_monotonic) >= GNSS_TIMESTAMP_LOG_PERIOD_SECONDS
-        )
-        if not should_log:
+        if abs(host_delta_ms) < (GNSS_HOST_SKEW_WARNING_SECONDS * 1_000):
+            self._host_skew_warning_active = False
             return
-        self._last_timestamp_log_monotonic = recorded_at_monotonic
-        LOGGER.info(
-            "GNSS timestamp accepted: raw=%r parsed_utc=%s host_utc=%s host_delta_ms=%.1f anchor_utc=%s sample_index=%s",
+        if self._host_skew_warning_active:
+            return
+        self._host_skew_warning_active = True
+        LOGGER.warning(
+            "GNSS timestamp differs from host clock: raw=%r parsed_utc=%s host_utc=%s "
+            "host_delta_ms=%.1f anchor_utc=%s",
             raw_value,
             format_timestamp_iso_utc(parsed_timestamp_us),
             format_timestamp_iso_utc(host_timestamp_us),
             host_delta_ms,
             format_timestamp_iso_utc(anchor_timestamp_us),
-            self._timestamps_seen,
         )

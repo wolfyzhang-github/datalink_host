@@ -15,7 +15,6 @@ from datalink_host.models.messages import ChannelFrame, TcpPacket
 LOGGER = logging.getLogger(__name__)
 NO_PAYLOAD_WARNING_INTERVAL_SECONDS = 5.0
 NO_PACKET_WARNING_INTERVAL_SECONDS = 5.0
-INITIAL_CHUNK_LOG_LIMIT = 5
 
 
 class TcpDataServer:
@@ -140,7 +139,6 @@ class TcpDataServer:
         connected_at = time.monotonic()
         bytes_received = 0
         packets_decoded = 0
-        chunks_received = 0
         next_no_payload_warning_at = connected_at + NO_PAYLOAD_WARNING_INTERVAL_SECONDS
         next_no_packet_warning_at = connected_at + NO_PACKET_WARNING_INTERVAL_SECONDS
         peer_label = self._peer_label(conn)
@@ -197,35 +195,10 @@ class TcpDataServer:
                     if bytes_received == 0 and not self._stop_event.is_set():
                         LOGGER.warning("TCP connection to %s closed before any payload bytes arrived", peer_label)
                     break
-                if bytes_received == 0:
-                    LOGGER.info(
-                        "Received first payload chunk from %s: %s bytes after %.3fs",
-                        peer_label,
-                        len(chunk),
-                        time.monotonic() - connected_at,
-                    )
                 bytes_received += len(chunk)
-                chunks_received += 1
                 self._on_bytes_received(len(chunk))
                 try:
                     packets = decoder.feed(chunk)
-                    if chunks_received <= INITIAL_CHUNK_LOG_LIMIT:
-                        LOGGER.info(
-                            "Chunk #%s from %s: chunk_bytes=%s, total_bytes=%s, buffered_bytes=%s, first_bytes=%s",
-                            chunks_received,
-                            peer_label,
-                            len(chunk),
-                            bytes_received,
-                            decoder.pending_bytes(),
-                            decoder.buffer_prefix_hex(),
-                        )
-                        if packets_decoded == 0 and decoder.pending_bytes() < decoder.header_size():
-                            LOGGER.info(
-                                "Waiting for full header from %s: buffered_bytes=%s, required_header_bytes=%s",
-                                peer_label,
-                                decoder.pending_bytes(),
-                                decoder.header_size(),
-                            )
                     accepted_packets: list[TcpPacket] = []
                     for packet in packets:
                         sample_rate = self._normalize_sample_rate(packet.sample_rate, peer_label)
@@ -233,13 +206,6 @@ class TcpDataServer:
                             continue
                         packet.sample_rate = sample_rate
                         accepted_packets.append(packet)
-                    if accepted_packets and packets_decoded == 0:
-                        LOGGER.info(
-                            "Decoded first packet from %s: sample_rate=%.3f Hz, payload_bytes=%s",
-                            peer_label,
-                            accepted_packets[0].sample_rate,
-                            accepted_packets[0].payload_bytes,
-                        )
                     packets_decoded += len(accepted_packets)
                     if packets_decoded == 0 and time.monotonic() >= next_no_packet_warning_at:
                         self._log_decode_wait_state(

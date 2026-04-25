@@ -57,8 +57,7 @@ LENGTH_FIELD_UNITS = {"bytes", "values"}
 BYTE_ORDERS = {"little", "big"}
 CHANNEL_LAYOUTS = {"interleaved", "channel-major"}
 GNSS_MODES = {"debug", "deploy"}
-TIMESTAMP_RESOLUTION_LOG_SAMPLE_LIMIT = 12
-TIMESTAMP_RESOLUTION_LOG_PERIOD_SECONDS = 5.0
+INITIAL_GNSS_TIMESTAMP_WAIT_MARGIN_SECONDS = 0.25
 
 
 class RuntimeService:
@@ -142,13 +141,11 @@ class RuntimeService:
         self._processor_thread = threading.Thread(target=self._run_processor, name="processor", daemon=True)
         self._runtime_started = False
         self._data_server_active = False
-        self._frames_enqueued = 0
-        self._frames_processed = 0
         self._last_frame_start_us: int | None = None
         self._last_frame_duration_us: int | None = None
         self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
         self._timestamp_resolution_count = 0
-        self._last_timestamp_resolution_log_monotonic = 0.0
+        self._last_timestamp_resolution_warning_key: tuple[str, str | None] | None = None
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -660,14 +657,6 @@ class RuntimeService:
                 self._snapshot.updated_at = wall_time()
             LOGGER.warning("Processing queue is full; dropping decoded frame")
             return
-        self._frames_enqueued += 1
-        if self._frames_enqueued == 1:
-            LOGGER.info(
-                "Enqueued first decoded frame: sample_rate=%.3f Hz, channels=%s, samples=%s",
-                frame.sample_rate,
-                frame.channels.shape[0],
-                frame.channels.shape[1],
-            )
         with self._lock:
             if timestamp_us is not None:
                 self._last_frame_start_us = timestamp_us
@@ -688,7 +677,15 @@ class RuntimeService:
     def _resolve_frame_timestamp(self, frame: ChannelFrame) -> tuple[int | None, bool, str | None]:
         sample_count = frame.channels.shape[1]
         frame_duration_us = self._frame_duration_us(frame)
-        if not self._settings.gnss.enabled:
+        with self._lock:
+            last_frame_start_us = self._last_frame_start_us
+            last_frame_duration_us = self._last_frame_duration_us
+        expected_next_us = (
+            None
+            if last_frame_start_us is None or last_frame_duration_us is None
+            else last_frame_start_us + last_frame_duration_us
+        )
+        if not self._settings.gnss.enabled or not self._settings.gnss.port.strip():
             timestamp_us = self._start_time_from_reference_timestamp(
                 reference_timestamp_us=int(round(frame.received_at * 1_000_000)),
                 frame_duration_us=frame_duration_us,
@@ -698,8 +695,8 @@ class RuntimeService:
                 assigned_timestamp_us=timestamp_us,
                 gnss_raw_timestamp_us=None,
                 gnss_now_timestamp_us=None,
-                last_frame_start_us=None,
-                expected_next_us=None,
+                last_frame_start_us=last_frame_start_us,
+                expected_next_us=expected_next_us,
                 frame_duration_us=frame_duration_us,
                 sample_rate=frame.sample_rate,
                 sample_count=sample_count,
@@ -710,19 +707,11 @@ class RuntimeService:
             return timestamp_us, False, None
 
         gnss_status = self._gnss_time.status()
-        timeout_seconds = max(
-            self._settings.gnss.packet_timestamp_timeout_seconds,
-            self._settings.gnss.serial_timeout_seconds,
+        timeout_seconds = self._gnss_timestamp_wait_timeout(
+            gnss_status=gnss_status,
+            last_frame_start_us=last_frame_start_us,
         )
         gnss_packet_end_us = self._gnss_time.wait_for_next_timestamp_us(timeout_seconds)
-        with self._lock:
-            last_frame_start_us = self._last_frame_start_us
-            last_frame_duration_us = self._last_frame_duration_us
-        expected_next_us = (
-            None
-            if last_frame_start_us is None or last_frame_duration_us is None
-            else last_frame_start_us + last_frame_duration_us
-        )
         if gnss_packet_end_us is not None:
             timestamp_us = self._start_time_from_reference_timestamp(
                 reference_timestamp_us=gnss_packet_end_us,
@@ -767,12 +756,17 @@ class RuntimeService:
             )
             return (timestamp_us, True, error)
 
+        timestamp_us = self._start_time_from_reference_timestamp(
+            reference_timestamp_us=int(round(frame.received_at * 1_000_000)),
+            frame_duration_us=frame_duration_us,
+        )
         error = gnss_status.last_error or (
-            f"GNSS packet timestamp did not arrive within {timeout_seconds:.3f}s and no fallback timestamp is available"
+            f"GNSS packet timestamp did not arrive within {timeout_seconds:.3f}s; "
+            "using host received timestamp fallback for first frame"
         )
         self._log_timestamp_resolution(
-            source="gnss_unavailable",
-            assigned_timestamp_us=None,
+            source="host_received_at_fallback",
+            assigned_timestamp_us=timestamp_us,
             gnss_raw_timestamp_us=gnss_status.last_timestamp_us,
             gnss_now_timestamp_us=None,
             last_frame_start_us=last_frame_start_us,
@@ -780,11 +774,30 @@ class RuntimeService:
             frame_duration_us=frame_duration_us,
             sample_rate=frame.sample_rate,
             sample_count=sample_count,
-            used_fallback=False,
+            used_fallback=True,
             error=error,
             gnss_skew_us=None,
         )
-        return None, False, error
+        return timestamp_us, True, error
+
+    def _gnss_timestamp_wait_timeout(
+        self,
+        *,
+        gnss_status: Any,
+        last_frame_start_us: int | None,
+    ) -> float:
+        timeout_seconds = max(
+            self._settings.gnss.packet_timestamp_timeout_seconds,
+            self._settings.gnss.serial_timeout_seconds,
+        )
+        if last_frame_start_us is None and gnss_status.last_timestamp_us is None:
+            startup_timeout = (
+                self._settings.gnss.timestamp_interval_seconds
+                + timeout_seconds
+                + INITIAL_GNSS_TIMESTAMP_WAIT_MARGIN_SECONDS
+            )
+            return max(timeout_seconds, startup_timeout)
+        return timeout_seconds
 
     @staticmethod
     def _frame_duration_us(frame: ChannelFrame) -> int | None:
@@ -822,18 +835,15 @@ class RuntimeService:
         gnss_skew_us: int | None,
     ) -> None:
         self._timestamp_resolution_count += 1
-        now_monotonic = time.monotonic()
-        should_log = (
-            self._timestamp_resolution_count <= TIMESTAMP_RESOLUTION_LOG_SAMPLE_LIMIT
-            or used_fallback
-            or error is not None
-            or source == "gnss_resync_to_current_time"
-            or (now_monotonic - self._last_timestamp_resolution_log_monotonic) >= TIMESTAMP_RESOLUTION_LOG_PERIOD_SECONDS
-        )
-        if not should_log:
+        should_warn = used_fallback or error is not None or source == "gnss_resync_to_current_time"
+        if not should_warn:
+            self._last_timestamp_resolution_warning_key = None
             return
-        self._last_timestamp_resolution_log_monotonic = now_monotonic
-        LOGGER.info(
+        warning_key = (source, error)
+        if warning_key == self._last_timestamp_resolution_warning_key:
+            return
+        self._last_timestamp_resolution_warning_key = warning_key
+        LOGGER.warning(
             "Frame timestamp resolved: source=%s assigned_utc=%s gnss_raw_utc=%s gnss_now_utc=%s "
             "last_frame_start_utc=%s expected_next_utc=%s frame_duration_ms=%s gnss_skew_ms=%s "
             "sample_rate_hz=%.3f sample_count=%s fallback=%s error=%s decision_index=%s",
@@ -871,15 +881,6 @@ class RuntimeService:
                 storage_enqueue_ms, datalink_publish_enqueue_ms = self._fan_out(processed)
                 fan_out_ms = (time.monotonic() - fan_out_started_at) * 1000.0
                 total_ms = (time.monotonic() - processing_started_at) * 1000.0
-                self._frames_processed += 1
-                if self._frames_processed == 1:
-                    LOGGER.info(
-                        "Processed first frame: raw_shape=%s, unwrapped_shape=%s, data1_shape=%s, data2_shape=%s",
-                        processed.raw.shape,
-                        processed.unwrapped.shape,
-                        processed.data1.shape,
-                        processed.data2.shape,
-                    )
                 queue_depth_after = self._queue.qsize()
                 if (
                     queue_wait_ms >= FRAME_QUEUE_WAIT_WARNING_MS

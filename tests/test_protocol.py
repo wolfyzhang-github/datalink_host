@@ -433,7 +433,7 @@ class ProtocolTests(unittest.TestCase):
         with (
             patch(
                 "datalink_host.ingest.data_server.time.monotonic",
-                side_effect=[0.0, 0.2, 0.3, 1.0, 2.0, 3.0, 4.0, 5.1, 5.2, 5.3],
+                side_effect=[0.0, 0.2, 1.0, 2.0, 3.0, 4.0, 5.1],
             ),
             patch("datalink_host.ingest.data_server.LOGGER.warning") as warning_mock,
         ):
@@ -564,7 +564,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertTrue(data1_files)
             expected_name = "SC.S0001.20231114221320123.R.10.HSH.mseed"
             self.assertEqual(expected_name, data1_files[0].name)
-            log_file = Path(tmpdir) / "Data1-01" / "SC.S0001.20231114221320123.R.10.LOG.log"
+            log_file = Path(tmpdir) / "log" / "SC.S0001.20231114221320123.R.10.LOG.log"
             self.assertTrue(log_file.is_file())
             self.assertIn("# MiniSEED sidecar log", log_file.read_text(encoding="utf-8"))
             stream = read(str(data1_files[0]))
@@ -627,11 +627,15 @@ class ProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             old_dir = root / "Data1-01"
+            log_dir = root / "log"
             old_dir.mkdir()
+            log_dir.mkdir()
             old_mseed = old_dir / "SC.S0001.20200101000000000.R.10.HSH.mseed"
             old_log = old_dir / "SC.S0001.20200101000000000.R.10.LOG.log"
+            shared_old_log = log_dir / "SC.S0001.20200101000000000.R.10.LOG.log"
             old_mseed.write_bytes(b"old")
             old_log.write_text("old log\n", encoding="utf-8")
+            shared_old_log.write_text("shared old log\n", encoding="utf-8")
 
             def disk_usage(_: Path) -> object:
                 if old_mseed.exists():
@@ -659,6 +663,7 @@ class ProtocolTests(unittest.TestCase):
 
             self.assertFalse(old_mseed.exists())
             self.assertFalse(old_log.exists())
+            self.assertFalse(shared_old_log.exists())
             new_files = sorted(root.glob("Data1-*/*.mseed"))
             self.assertEqual(1, len(new_files))
             self.assertNotEqual(old_mseed.name, new_files[0].name)
@@ -1201,6 +1206,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertIsNone(error)
         runtime._datalink.close()
 
+    def test_runtime_with_gnss_enabled_but_no_port_uses_host_receive_time(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gnss = GnssSettings(enabled=True, port="")
+        runtime._gnss_time.wait_for_next_timestamp_us = Mock()  # type: ignore[method-assign]
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 1000), dtype=np.float32),
+            received_at=1_700_000_001.250,
+        )
+
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_000_250_000, timestamp_us)
+        self.assertFalse(used_fallback)
+        self.assertIsNone(error)
+        runtime._gnss_time.wait_for_next_timestamp_us.assert_not_called()
+        runtime._datalink.close()
+
     def test_runtime_subtracts_frame_duration_from_packet_end_gnss_timestamp(self) -> None:
         runtime = RuntimeService(AppSettings())
         runtime._settings.gnss = GnssSettings(
@@ -1265,6 +1289,82 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(1_700_000_001_000_000, timestamp_us)
         self.assertTrue(used_fallback)
         self.assertIn("gnss offline", error or "")
+        runtime._datalink.close()
+
+    def test_runtime_extends_initial_gnss_wait_until_first_timestamp(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gnss = GnssSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=1.0,
+            packet_timestamp_timeout_seconds=1.0,
+            serial_timeout_seconds=0.1,
+        )
+        runtime._gnss_time.wait_for_next_timestamp_us = Mock(  # type: ignore[method-assign]
+            return_value=1_700_000_001_000_000
+        )
+        runtime._gnss_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GnssStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=None,
+                last_error=None,
+            )
+        )
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 1000), dtype=np.float32),
+            received_at=1_700_000_000.243,
+        )
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_000_000_000, timestamp_us)
+        self.assertFalse(used_fallback)
+        self.assertIsNone(error)
+        wait_timeout = runtime._gnss_time.wait_for_next_timestamp_us.call_args.args[0]
+        self.assertAlmostEqual(2.25, wait_timeout)
+        runtime._datalink.close()
+
+    def test_runtime_uses_host_time_when_initial_gnss_wait_times_out(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gnss = GnssSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=1.0,
+            packet_timestamp_timeout_seconds=1.0,
+        )
+        runtime._gnss_time.wait_for_next_timestamp_us = Mock(return_value=None)  # type: ignore[method-assign]
+        runtime._gnss_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GnssStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=None,
+                last_error=None,
+            )
+        )
+
+        frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 1000), dtype=np.float32),
+            received_at=1_700_000_001.250,
+        )
+        timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
+
+        self.assertEqual(1_700_000_000_250_000, timestamp_us)
+        self.assertTrue(used_fallback)
+        self.assertIn("host received timestamp fallback", error or "")
+        self.assertNotIn("no fallback timestamp is available", error or "")
         runtime._datalink.close()
 
     def test_runtime_packet_timestamp_does_not_add_fractional_monotonic_elapsed_time(self) -> None:
