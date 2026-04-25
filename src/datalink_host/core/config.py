@@ -102,7 +102,9 @@ class WebSettings:
 @dataclass(slots=True)
 class GuiSettings:
     refresh_interval_ms: int = 250
-    max_points_per_trace: int = 4096
+    plot_window_seconds: float = 20.0
+    plot_history_seconds: float = 120.0
+    max_points_per_trace: int = 200000
 
 
 @dataclass(slots=True)

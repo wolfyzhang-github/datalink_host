@@ -103,6 +103,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._queue_bars: dict[str, QtWidgets.QProgressBar] = {}
         self._queue_value_labels: dict[str, QtWidgets.QLabel] = {}
         self._mode_selectors: list[QtWidgets.QComboBox] = []
+        self._plot_window_seconds_spin: QtWidgets.QDoubleSpinBox | None = None
 
         self._processing_state_label: QtWidgets.QLabel | None = None
         self._ingest_help_label: QtWidgets.QLabel | None = None
@@ -136,6 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_network_edit: QtWidgets.QLineEdit | None = None
         self._storage_station_edit: QtWidgets.QLineEdit | None = None
         self._storage_location_edit: QtWidgets.QLineEdit | None = None
+        self._storage_channel_codes_edit: QtWidgets.QLineEdit | None = None
 
         self._datalink_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._datalink_host_edit: QtWidgets.QLineEdit | None = None
@@ -260,6 +262,9 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar = QtWidgets.QHBoxLayout()
         toolbar.addWidget(QtWidgets.QLabel("显示数据", workspace))
         toolbar.addWidget(self._create_mode_selector(workspace))
+        toolbar.addSpacing(18)
+        toolbar.addWidget(QtWidgets.QLabel("显示时长", workspace))
+        toolbar.addWidget(self._create_plot_window_seconds_spin(workspace))
         toolbar.addStretch(1)
         toolbar.addWidget(QtWidgets.QLabel("当前源采样率", workspace))
         toolbar.addWidget(self._create_snapshot_label("source_sample_rate", workspace))
@@ -640,6 +645,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_network_edit = QtWidgets.QLineEdit(card)
         self._storage_station_edit = QtWidgets.QLineEdit(card)
         self._storage_location_edit = QtWidgets.QLineEdit(card)
+        self._storage_channel_codes_edit = QtWidgets.QLineEdit(card)
+        self._storage_channel_codes_edit.setPlaceholderText("HSH, HSZ, HS1, HS2, HS3, HS4, HTH, HTZ")
 
         self._capture_enabled_checkbox = QtWidgets.QCheckBox("启用原始 TCP 抓包", card)
         self._capture_enabled_checkbox.toggled.connect(self._update_form_state)
@@ -657,6 +664,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("网络码", self._storage_network_edit)
         form.addRow("台站码", self._storage_station_edit)
         form.addRow("位置码", self._storage_location_edit)
+        form.addRow("通道码", self._storage_channel_codes_edit)
         form.addRow(self._capture_enabled_checkbox)
         form.addRow("抓包文件", capture_widget)
         layout.addLayout(form)
@@ -808,6 +816,7 @@ class MainWindow(QtWidgets.QMainWindow):
             axis = plot.getAxis(axis_name)
             axis.setPen(axis_pen)
             axis.setTextPen(text_pen.color())
+        plot.setLabel("bottom", "时间", units="s")
         return plot
 
     def _create_mode_selector(self, parent: QtWidgets.QWidget) -> QtWidgets.QComboBox:
@@ -820,6 +829,19 @@ class MainWindow(QtWidgets.QMainWindow):
         combo.currentIndexChanged.connect(partial(self._on_mode_selector_changed, combo))
         self._mode_selectors.append(combo)
         return combo
+
+    def _create_plot_window_seconds_spin(self, parent: QtWidgets.QWidget) -> QtWidgets.QDoubleSpinBox:
+        spin = QtWidgets.QDoubleSpinBox(parent)
+        spin.setRange(1.0, self._settings.gui.plot_history_seconds)
+        spin.setDecimals(0)
+        spin.setSingleStep(5.0)
+        spin.setSuffix(" s")
+        spin.setValue(self._settings.gui.plot_window_seconds)
+        spin.valueChanged.connect(
+            lambda value: setattr(self._settings.gui, "plot_window_seconds", float(value))
+        )
+        self._plot_window_seconds_spin = spin
+        return spin
 
     def _on_mode_selector_changed(self, combo: QtWidgets.QComboBox, index: int) -> None:  # noqa: ARG002
         self._set_mode(str(combo.currentData()))
@@ -872,6 +894,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
+        assert self._storage_channel_codes_edit is not None
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
@@ -922,6 +945,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_network_edit.setText(storage["network"])
         self._storage_station_edit.setText(storage["station"])
         self._storage_location_edit.setText(storage["location"])
+        self._storage_channel_codes_edit.setText(", ".join(storage.get("channel_codes", [])))
 
         self._datalink_enabled_checkbox.setChecked(datalink["enabled"])
         self._datalink_host_edit.setText(datalink["host"])
@@ -1025,7 +1049,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
         self._set_section_enabled(
-            self._storage_enabled_checkbox.isChecked() if self._storage_enabled_checkbox is not None else False,
+            True,
             [
                 self._storage_root_edit,
                 self._storage_browse_button,
@@ -1033,10 +1057,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._storage_network_edit,
                 self._storage_station_edit,
                 self._storage_location_edit,
+                self._storage_channel_codes_edit,
             ],
         )
         self._set_section_enabled(
-            self._datalink_enabled_checkbox.isChecked() if self._datalink_enabled_checkbox is not None else False,
+            True,
             [
                 self._datalink_host_edit,
                 self._datalink_port_spin,
@@ -1071,6 +1096,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if widget is not None:
                 widget.setEnabled(enabled)
 
+    @staticmethod
+    def _parse_channel_codes(text: str) -> list[str]:
+        return [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
+
     def _apply_runtime_config(self) -> None:
         assert self._data1_rate_spin is not None
         assert self._data2_rate_spin is not None
@@ -1092,6 +1121,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
+        assert self._storage_channel_codes_edit is not None
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
@@ -1135,6 +1165,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "network": self._storage_network_edit.text().strip() or "SC",
                 "station": self._storage_station_edit.text().strip() or "S0001",
                 "location": self._storage_location_edit.text().strip() or "10",
+                "channel_codes": self._parse_channel_codes(self._storage_channel_codes_edit.text()),
             },
             "datalink": {
                 "enabled": self._datalink_enabled_checkbox.isChecked(),
@@ -1188,14 +1219,22 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self._runtime.snapshot()
         self._update_processing_controls()
         self._update_status(snapshot)
-        data = self._snapshot_data(snapshot)
+        data, sample_rate = self._snapshot_data(snapshot)
+        x_values = None
+        if (
+            data is not None
+            and data.shape[1] > 0
+            and sample_rate is not None
+            and sample_rate > 0
+        ):
+            x_values = (np.arange(data.shape[1]) - data.shape[1] + 1) / sample_rate
         for index, curve in enumerate(self._plots):
             if curve is None:
                 continue
             if data is None or data.shape[0] <= index or data.shape[1] == 0:
                 curve.setData([])
                 continue
-            curve.setData(np.arange(data.shape[1]), data[index])
+            curve.setData(x_values if x_values is not None else np.arange(data.shape[1]), data[index])
         self._update_logs()
 
     @staticmethod
@@ -1323,14 +1362,32 @@ class MainWindow(QtWidgets.QMainWindow):
             "当前运行中，应用配置后会按新参数自动重连。" if active else "当前未运行，应用配置后只更新参数，不会自动启动。"
         )
 
-    def _snapshot_data(self, snapshot: RuntimeSnapshot) -> np.ndarray | None:
+    def _snapshot_data(self, snapshot: RuntimeSnapshot) -> tuple[np.ndarray | None, float | None]:
+        def window(
+            data: np.ndarray | None,
+            sample_rate: float | None,
+        ) -> tuple[np.ndarray | None, float | None]:
+            max_points = self._plot_window_points(sample_rate)
+            return slice_for_plot(data, max_points), sample_rate
+
         if self._data_mode == "raw":
-            return slice_for_plot(snapshot.latest_raw, self._settings.gui.max_points_per_trace)
+            return window(snapshot.latest_raw, snapshot.source_sample_rate)
         if self._data_mode == "data1":
-            return slice_for_plot(snapshot.latest_data1, self._settings.gui.max_points_per_trace)
+            return window(snapshot.latest_data1, snapshot.data1_rate)
         if self._data_mode == "data2":
-            return slice_for_plot(snapshot.latest_data2, self._settings.gui.max_points_per_trace)
-        return slice_for_plot(snapshot.latest_unwrapped, self._settings.gui.max_points_per_trace)
+            return window(snapshot.latest_data2, snapshot.data2_rate)
+        return window(snapshot.latest_unwrapped, snapshot.source_sample_rate)
+
+    def _plot_window_points(self, sample_rate: float | None) -> int:
+        seconds = (
+            self._plot_window_seconds_spin.value()
+            if self._plot_window_seconds_spin is not None
+            else self._settings.gui.plot_window_seconds
+        )
+        point_limit = max(int(self._settings.gui.max_points_per_trace), 1)
+        if sample_rate is None or sample_rate <= 0:
+            return point_limit
+        return max(1, min(point_limit, int(round(sample_rate * max(seconds, 1.0)))))
 
     def _update_logs(self) -> None:
         if self._log_view is None or self._log_level_combo is None:

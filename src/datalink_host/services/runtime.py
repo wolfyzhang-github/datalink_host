@@ -326,9 +326,21 @@ class RuntimeService:
                 },
             }
 
-    def monitor_view(self, mode: str = "raw", *, max_points: int = 2048, max_packets: int = 20) -> dict[str, Any]:
+    def monitor_view(
+        self,
+        mode: str = "raw",
+        *,
+        max_points: int = 2048,
+        max_packets: int = 20,
+        window_seconds: float | None = None,
+    ) -> dict[str, Any]:
         snapshot = self.snapshot()
-        data, sample_rate = self._series_for_monitor(snapshot, mode=mode, max_points=max_points)
+        data, sample_rate = self._series_for_monitor(
+            snapshot,
+            mode=mode,
+            max_points=max_points,
+            window_seconds=window_seconds,
+        )
         with self._lock:
             recent_packets = [dict(packet) for packet in list(self._recent_packets)[-max_packets:]]
             channel_codes = list(self._settings.storage.channel_codes)
@@ -341,6 +353,7 @@ class RuntimeService:
                 "sample_rate": sample_rate,
                 "channels": int(data.shape[0]) if data is not None else protocol_channels,
                 "points": int(data.shape[1]) if data is not None else 0,
+                "window_seconds": window_seconds,
                 "series": data.tolist() if data is not None else [],
                 "updated_at": snapshot.updated_at,
             },
@@ -875,10 +888,26 @@ class RuntimeService:
                         processed.data2.shape,
                     )
                 with self._lock:
-                    self._snapshot.latest_raw = processed.raw
-                    self._snapshot.latest_unwrapped = processed.unwrapped
-                    self._snapshot.latest_data1 = processed.data1
-                    self._snapshot.latest_data2 = processed.data2
+                    self._snapshot.latest_raw = self._append_plot_history(
+                        self._snapshot.latest_raw,
+                        processed.raw,
+                        processed.sample_rate,
+                    )
+                    self._snapshot.latest_unwrapped = self._append_plot_history(
+                        self._snapshot.latest_unwrapped,
+                        processed.unwrapped,
+                        processed.sample_rate,
+                    )
+                    self._snapshot.latest_data1 = self._append_plot_history(
+                        self._snapshot.latest_data1,
+                        processed.data1,
+                        processed.data1_sample_rate,
+                    )
+                    self._snapshot.latest_data2 = self._append_plot_history(
+                        self._snapshot.latest_data2,
+                        processed.data2,
+                        processed.data2_sample_rate,
+                    )
                     self._snapshot.queue_depth = queue_depth_after
                     self._snapshot.updated_at = time.time()
             except Exception as exc:  # noqa: BLE001
@@ -907,6 +936,11 @@ class RuntimeService:
                 LOGGER.info("Cleared %s pending GNSS timestamp events when data connection opened", dropped)
         with self._lock:
             self._snapshot.data_connected = connected
+            if connected:
+                self._snapshot.latest_raw = None
+                self._snapshot.latest_unwrapped = None
+                self._snapshot.latest_data1 = None
+                self._snapshot.latest_data2 = None
             self._snapshot.updated_at = time.time()
 
     def _set_control_connected(self, connected: bool) -> None:
@@ -997,15 +1031,71 @@ class RuntimeService:
         *,
         mode: str,
         max_points: int,
+        window_seconds: float | None = None,
     ) -> tuple[np.ndarray | None, float | None]:
         mode_name = mode if mode in {"raw", "unwrapped", "data1", "data2"} else "raw"
         if mode_name == "raw":
-            return slice_for_plot(snapshot.latest_raw, max_points), snapshot.source_sample_rate
+            return self._slice_monitor_series(
+                snapshot.latest_raw,
+                snapshot.source_sample_rate,
+                max_points,
+                window_seconds,
+            )
         if mode_name == "data1":
-            return slice_for_plot(snapshot.latest_data1, max_points), snapshot.data1_rate
+            return self._slice_monitor_series(
+                snapshot.latest_data1,
+                snapshot.data1_rate,
+                max_points,
+                window_seconds,
+            )
         if mode_name == "data2":
-            return slice_for_plot(snapshot.latest_data2, max_points), snapshot.data2_rate
-        return slice_for_plot(snapshot.latest_unwrapped, max_points), snapshot.source_sample_rate
+            return self._slice_monitor_series(
+                snapshot.latest_data2,
+                snapshot.data2_rate,
+                max_points,
+                window_seconds,
+            )
+        return self._slice_monitor_series(
+            snapshot.latest_unwrapped,
+            snapshot.source_sample_rate,
+            max_points,
+            window_seconds,
+        )
+
+    def _append_plot_history(
+        self,
+        current: np.ndarray | None,
+        incoming: np.ndarray,
+        sample_rate: float | None,
+    ) -> np.ndarray | None:
+        if incoming.size == 0:
+            return current
+        max_points = self._plot_history_points(sample_rate)
+        if current is None or current.size == 0 or current.shape[0] != incoming.shape[0]:
+            return slice_for_plot(incoming, max_points)
+        return slice_for_plot(np.concatenate([current, incoming], axis=1), max_points)
+
+    def _plot_history_points(self, sample_rate: float | None) -> int:
+        configured_limit = max(int(self._settings.gui.max_points_per_trace), 1)
+        seconds = max(float(self._settings.gui.plot_history_seconds), 1.0)
+        if sample_rate is None or sample_rate <= 0:
+            return configured_limit
+        return max(1, min(configured_limit, int(round(sample_rate * seconds))))
+
+    @staticmethod
+    def _slice_monitor_series(
+        data: np.ndarray | None,
+        sample_rate: float | None,
+        max_points: int,
+        window_seconds: float | None,
+    ) -> tuple[np.ndarray | None, float | None]:
+        point_limit = max(int(max_points), 1)
+        if window_seconds is not None and sample_rate is not None and sample_rate > 0:
+            point_limit = min(
+                point_limit,
+                max(1, int(round(sample_rate * max(window_seconds, 0.0)))),
+            )
+        return slice_for_plot(data, point_limit), sample_rate
 
 
 def slice_for_plot(data: np.ndarray | None, max_points: int) -> np.ndarray | None:

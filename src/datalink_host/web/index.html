@@ -221,20 +221,15 @@
                 <select id="wave-channel" class="form-select"></select>
               </div>
               <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="max-points">最大点数</label>
-                <select id="max-points" class="form-select">
-                  <option value="512">512</option>
-                  <option value="1024">1024</option>
-                  <option value="2048" selected>2048</option>
-                  <option value="4096">4096</option>
-                </select>
+                <label class="form-label" for="wave-window-seconds">显示时长(秒)</label>
+                <input id="wave-window-seconds" class="form-control" type="number" min="1" max="120" step="1" value="20">
               </div>
               <div class="col-sm-6 col-lg-3">
                 <label class="form-label" for="refresh-ms">刷新周期</label>
                 <select id="refresh-ms" class="form-select">
                   <option value="250">250 ms</option>
-                  <option value="500" selected>500 ms</option>
-                  <option value="1000">1 s</option>
+                  <option value="500">500 ms</option>
+                  <option value="1000" selected>1 s</option>
                 </select>
               </div>
             </div>
@@ -502,6 +497,10 @@
                         <label class="form-label" for="storage-location">位置码</label>
                         <input id="storage-location" class="form-control" type="text">
                       </div>
+                      <div class="col-12">
+                        <label class="form-label" for="storage-channel-codes">通道码</label>
+                        <textarea id="storage-channel-codes" class="form-control" rows="2" placeholder="HSH, HSZ, HS1, HS2, HS3, HS4, HTH, HTZ"></textarea>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -527,6 +526,10 @@
                       <div class="col-md-6">
                         <label class="form-label" for="datalink-port">远传端口</label>
                         <input id="datalink-port" class="form-control" type="number" min="1" max="65535">
+                      </div>
+                      <div class="col-12">
+                        <label class="form-label" for="datalink-stream-template">流模板</label>
+                        <input id="datalink-stream-template" class="form-control" type="text" placeholder="{network}_{station}_{location}_{channel}/MSEED">
                       </div>
                       <div class="col-md-6">
                         <div class="form-check mt-4">
@@ -622,8 +625,9 @@
       connected: false,
       pollTimer: null,
       pollInFlight: false,
-      refreshMs: 500,
-      maxPoints: 2048,
+      refreshMs: 1000,
+      windowSeconds: 20,
+      maxPoints: 200000,
       maxPackets: 20,
       wavePayload: null,
       latestStatus: null,
@@ -664,7 +668,7 @@
       overviewDatalinkPublishError: document.getElementById("overview-datalink-publish-error"),
       waveMode: document.getElementById("wave-mode"),
       waveChannel: document.getElementById("wave-channel"),
-      maxPoints: document.getElementById("max-points"),
+      waveWindowSeconds: document.getElementById("wave-window-seconds"),
       refreshMs: document.getElementById("refresh-ms"),
       maxPackets: document.getElementById("max-packets"),
       waveSummary: document.getElementById("wave-summary"),
@@ -698,10 +702,12 @@
       storageNetwork: document.getElementById("storage-network"),
       storageStation: document.getElementById("storage-station"),
       storageLocation: document.getElementById("storage-location"),
+      storageChannelCodes: document.getElementById("storage-channel-codes"),
       datalinkEnabled: document.getElementById("datalink-enabled"),
       datalinkFields: document.getElementById("datalink-fields"),
       datalinkHost: document.getElementById("datalink-host"),
       datalinkPort: document.getElementById("datalink-port"),
+      datalinkStreamTemplate: document.getElementById("datalink-stream-template"),
       ackRequired: document.getElementById("ack-required"),
       sendData2: document.getElementById("send-data2"),
       captureEnabled: document.getElementById("capture-enabled"),
@@ -779,8 +785,9 @@
       els.waveChannel.addEventListener("change", renderChartsFromWavePayload);
       els.analysisChannel.addEventListener("change", renderChartsFromWavePayload);
       els.analysisWindow.addEventListener("change", renderChartsFromWavePayload);
-      els.maxPoints.addEventListener("change", () => {
-        state.maxPoints = Number(els.maxPoints.value);
+      els.waveWindowSeconds.addEventListener("change", () => {
+        state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 120);
+        els.waveWindowSeconds.value = String(state.windowSeconds);
         refreshMonitor();
       });
       els.maxPackets.addEventListener("change", () => {
@@ -805,6 +812,13 @@
         return "-";
       }
       return new Intl.NumberFormat("zh-CN").format(numeric);
+    }
+
+    function clamp(value, min, max) {
+      if (!Number.isFinite(value)) {
+        return min;
+      }
+      return Math.min(Math.max(value, min), max);
     }
 
     function formatRate(value) {
@@ -926,6 +940,17 @@
       return numeric;
     }
 
+    function parseList(value, fieldName) {
+      const items = value
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (items.length === 0) {
+        throw new Error(`${fieldName}不能为空`);
+      }
+      return items;
+    }
+
     function updateFormState() {
       const clientMode = els.dataMode.value === "client";
       els.listenHost.disabled = clientMode;
@@ -936,8 +961,8 @@
         ? "当前为主动连接设备模式：系统会主动连接“设备地址/设备端口”，监听地址只作为保留配置。"
         : "当前为监听设备连接模式：系统会在“本地监听地址/端口”等待设备主动接入。";
 
-      toggleFieldGroup(els.storageFields, els.storageEnabled.checked);
-      toggleFieldGroup(els.datalinkFields, els.datalinkEnabled.checked);
+      toggleFieldGroup(els.storageFields, true);
+      toggleFieldGroup(els.datalinkFields, true);
       toggleFieldGroup(els.captureFields, els.captureEnabled.checked);
       toggleFieldGroup(els.gnssFields, els.gnssEnabled.checked);
     }
@@ -978,9 +1003,13 @@
       els.storageNetwork.value = storage.network || "SC";
       els.storageStation.value = storage.station || "S0001";
       els.storageLocation.value = storage.location || "10";
+      els.storageChannelCodes.value = Array.isArray(storage.channel_codes)
+        ? storage.channel_codes.join(", ")
+        : "";
       els.datalinkEnabled.checked = Boolean(datalink.enabled);
       els.datalinkHost.value = datalink.host || "";
       els.datalinkPort.value = datalink.port ?? "";
+      els.datalinkStreamTemplate.value = datalink.stream_id_template || "{network}_{station}_{location}_{channel}/MSEED";
       els.ackRequired.checked = Boolean(datalink.ack_required);
       els.sendData2.checked = Boolean(datalink.send_data2);
       els.captureEnabled.checked = Boolean(capture.enabled);
@@ -1050,11 +1079,13 @@
           network: els.storageNetwork.value.trim() || "SC",
           station: els.storageStation.value.trim() || "S0001",
           location: els.storageLocation.value.trim() || "10",
+          channel_codes: parseList(els.storageChannelCodes.value, "通道码"),
         },
         datalink: {
           enabled: els.datalinkEnabled.checked,
           host: els.datalinkHost.value.trim() || "127.0.0.1",
           port: readNumber(els.datalinkPort, "远传端口"),
+          stream_id_template: els.datalinkStreamTemplate.value.trim() || "{network}_{station}_{location}_{channel}/MSEED",
           ack_required: els.ackRequired.checked,
           send_data2: els.sendData2.checked,
         },
@@ -1181,7 +1212,7 @@
       state.pollInFlight = true;
       try {
         const payload = await apiRequest(
-          `/api/monitor?mode=${encodeURIComponent(els.waveMode.value)}&max_points=${state.maxPoints}&max_packets=${state.maxPackets}`
+          `/api/monitor?mode=${encodeURIComponent(els.waveMode.value)}&window_seconds=${state.windowSeconds}&max_points=${state.maxPoints}&max_packets=${state.maxPackets}`
         );
         const status = payload.status || {};
         state.latestStatus = status;
@@ -1315,11 +1346,11 @@
 
       updateChart(
         state.waveChart,
-        waveSeries.map((value, index) => ({ x: index, y: value })),
+        seriesToTimePoints(waveSeries, sampleRate),
         `CH ${selectedWaveChannel + 1}`
       );
       els.waveSummary.textContent = waveSeries.length
-        ? `当前显示 ${waveSeries.length} 个点，来源 ${waveform.mode}。`
+        ? `当前显示最近 ${formatWindowSeconds(waveform, waveSeries, sampleRate)}，共 ${waveSeries.length} 个点，来源 ${waveform.mode}。`
         : "当前模式下还没有可绘制的点。";
       els.waveMeta.textContent = `sampleRate ${formatRate(sampleRate)} / channels ${waveform.channels} / updated ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
 
@@ -1327,7 +1358,7 @@
       const windowed = analysisSeries.slice(Math.max(analysisSeries.length - analysisWindow, 0));
       updateChart(
         state.analysisTimeChart,
-        windowed.map((value, index) => ({ x: index, y: value })),
+        seriesToTimePoints(windowed, sampleRate),
         `CH ${selectedAnalysisChannel + 1}`
       );
       const { freqs, psd } = computePsd(windowed, sampleRate);
@@ -1342,6 +1373,20 @@
       chart.data.datasets[0].label = label;
       chart.data.datasets[0].data = data;
       chart.update("none");
+    }
+
+    function seriesToTimePoints(values, sampleRate) {
+      if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+        return values.map((value, index) => ({ x: index, y: value }));
+      }
+      return values.map((value, index) => ({ x: (index - values.length + 1) / sampleRate, y: value }));
+    }
+
+    function formatWindowSeconds(waveform, values, sampleRate) {
+      const configured = Number(waveform.window_seconds);
+      const actual = Number.isFinite(sampleRate) && sampleRate > 0 ? values.length / sampleRate : configured;
+      const seconds = Number.isFinite(actual) && actual > 0 ? Math.min(actual, configured || actual) : configured;
+      return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(2)} s`;
     }
 
     function computePsd(values, sampleRate) {
@@ -1396,7 +1441,7 @@
       bindEvents();
       loadConnectionPreset();
       state.refreshMs = Number(els.refreshMs.value);
-      state.maxPoints = Number(els.maxPoints.value);
+      state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 120);
       state.maxPackets = Number(els.maxPackets.value);
       updateFormState();
       const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";

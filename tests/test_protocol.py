@@ -334,6 +334,41 @@ class ProtocolTests(unittest.TestCase):
 
         runtime._restart_data_server.assert_called_once()
 
+    def test_runtime_update_config_accepts_storage_and_datalink_editable_fields(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        channel_codes = ["EHZ", "EHN", "EHE", "BH1", "BH2", "BH3", "LHZ", "LHN"]
+
+        updated = runtime.update_config(
+            {
+                "storage": {
+                    "enabled": False,
+                    "root": "./var/custom-storage",
+                    "file_duration_seconds": 120,
+                    "network": "ZZ",
+                    "station": "EDIT1",
+                    "location": "20",
+                    "channel_codes": channel_codes,
+                },
+                "datalink": {
+                    "enabled": False,
+                    "host": "192.0.2.10",
+                    "port": 18000,
+                    "stream_id_template": "{network}.{station}.{location}.{channel}",
+                    "ack_required": False,
+                    "send_data2": True,
+                },
+            }
+        )
+
+        self.assertEqual(channel_codes, updated["storage"]["channel_codes"])
+        self.assertEqual("var/custom-storage", updated["storage"]["root"])
+        self.assertEqual("{network}.{station}.{location}.{channel}", updated["datalink"]["stream_id_template"])
+        self.assertEqual("192.0.2.10", updated["datalink"]["host"])
+        self.assertEqual(18000, updated["datalink"]["port"])
+        self.assertFalse(updated["datalink"]["ack_required"])
+        self.assertTrue(updated["datalink"]["send_data2"])
+        runtime._datalink.close()
+
     def test_data_server_logs_when_connected_without_payload(self) -> None:
         conn = Mock()
         conn.getpeername.return_value = ("169.254.56.252", 3677)
@@ -1298,6 +1333,30 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("000000", payload["recent_packets"][0]["hex_dump"])
         runtime._datalink.close()
 
+    def test_runtime_monitor_view_slices_by_window_seconds(self) -> None:
+        settings = AppSettings()
+        settings.gui.plot_history_seconds = 3.0
+        settings.gui.max_points_per_trace = 1000
+        runtime = RuntimeService(settings)
+        with runtime._lock:
+            runtime._snapshot.source_sample_rate = 2.0
+            runtime._snapshot.latest_raw = runtime._append_plot_history(
+                runtime._snapshot.latest_raw,
+                np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float64),
+                2.0,
+            )
+            runtime._snapshot.latest_raw = runtime._append_plot_history(
+                runtime._snapshot.latest_raw,
+                np.array([[5.0, 6.0, 7.0, 8.0]], dtype=np.float64),
+                2.0,
+            )
+
+        payload = runtime.monitor_view(mode="raw", max_points=100, max_packets=1, window_seconds=2.0)
+
+        self.assertEqual(4, payload["waveform"]["points"])
+        self.assertEqual([[5.0, 6.0, 7.0, 8.0]], payload["waveform"]["series"])
+        runtime._datalink.close()
+
     def test_web_api_exposes_monitor_and_processing_controls(self) -> None:
         runtime = RuntimeService(AppSettings())
         runtime.resume_processing = Mock()  # type: ignore[method-assign]
@@ -1333,12 +1392,12 @@ class ProtocolTests(unittest.TestCase):
 
         runtime._datalink.close()
 
-    def test_web_api_rejects_monitor_requests_over_4096_points(self) -> None:
+    def test_web_api_rejects_monitor_requests_over_200000_points(self) -> None:
         runtime = RuntimeService(AppSettings())
         app = create_app(runtime)
 
         with TestClient(app) as client:
-            response = client.get("/api/monitor?mode=raw&max_points=4097&max_packets=5")
+            response = client.get("/api/monitor?mode=raw&max_points=200001&max_packets=5")
             self.assertEqual(422, response.status_code)
 
         runtime._datalink.close()
