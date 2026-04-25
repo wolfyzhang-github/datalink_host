@@ -134,6 +134,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_root_edit: QtWidgets.QLineEdit | None = None
         self._storage_browse_button: QtWidgets.QPushButton | None = None
         self._storage_duration_spin: QtWidgets.QSpinBox | None = None
+        self._storage_output_data_type_combo: QtWidgets.QComboBox | None = None
+        self._storage_int32_gain_spin: QtWidgets.QDoubleSpinBox | None = None
         self._storage_network_edit: QtWidgets.QLineEdit | None = None
         self._storage_station_edit: QtWidgets.QLineEdit | None = None
         self._storage_location_edit: QtWidgets.QLineEdit | None = None
@@ -642,6 +644,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._storage_duration_spin = QtWidgets.QSpinBox(card)
         self._storage_duration_spin.setRange(1, 86400)
+        self._storage_output_data_type_combo = QtWidgets.QComboBox(card)
+        self._storage_output_data_type_combo.addItem("float32", "float32")
+        self._storage_output_data_type_combo.addItem("INT32", "int32")
+        self._storage_output_data_type_combo.currentIndexChanged.connect(self._update_form_state)
+        self._storage_int32_gain_spin = QtWidgets.QDoubleSpinBox(card)
+        self._storage_int32_gain_spin.setRange(0.000001, 1_000_000_000_000.0)
+        self._storage_int32_gain_spin.setDecimals(6)
+        self._storage_int32_gain_spin.setSingleStep(1000.0)
         self._storage_network_edit = QtWidgets.QLineEdit(card)
         self._storage_station_edit = QtWidgets.QLineEdit(card)
         self._storage_location_edit = QtWidgets.QLineEdit(card)
@@ -660,6 +670,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         form.addRow("存储目录", storage_widget)
         form.addRow("单文件时长(秒)", self._storage_duration_spin)
+        form.addRow("数据类型(存储/远传)", self._storage_output_data_type_combo)
+        form.addRow("增益", self._storage_int32_gain_spin)
         form.addRow("网络码", self._storage_network_edit)
         form.addRow("台站码", self._storage_station_edit)
         form.addRow("位置码", self._storage_location_edit)
@@ -912,6 +924,8 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._storage_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
+        assert self._storage_output_data_type_combo is not None
+        assert self._storage_int32_gain_spin is not None
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
@@ -963,6 +977,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_enabled_checkbox.setChecked(storage["enabled"])
         self._storage_root_edit.setText(storage["root"])
         self._storage_duration_spin.setValue(storage["file_duration_seconds"])
+        output_data_type_index = self._storage_output_data_type_combo.findData(
+            str(storage.get("output_data_type", "float32")).lower()
+        )
+        self._storage_output_data_type_combo.setCurrentIndex(max(output_data_type_index, 0))
+        self._storage_int32_gain_spin.setValue(float(storage.get("int32_gain", 1_000_000.0)))
         self._storage_network_edit.setText(storage["network"])
         self._storage_station_edit.setText(storage["station"])
         self._storage_location_edit.setText(storage["location"])
@@ -1055,6 +1074,8 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._data_remote_port_spin is not None
         assert self._connection_mode_hint_label is not None
         assert self._datalink_stream_template_edit is not None
+        assert self._storage_output_data_type_combo is not None
+        assert self._storage_int32_gain_spin is not None
 
         self._data_host_edit.setEnabled(server_mode)
         self._data_port_spin.setEnabled(server_mode)
@@ -1075,11 +1096,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._storage_root_edit,
                 self._storage_browse_button,
                 self._storage_duration_spin,
+                self._storage_output_data_type_combo,
+                self._storage_int32_gain_spin,
                 self._storage_network_edit,
                 self._storage_station_edit,
                 self._storage_location_edit,
                 self._storage_channel_codes_table,
             ],
+        )
+        self._storage_int32_gain_spin.setEnabled(
+            self._storage_output_data_type_combo.currentData() == "int32"
         )
         self._set_section_enabled(
             True,
@@ -1155,6 +1181,8 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._storage_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
+        assert self._storage_output_data_type_combo is not None
+        assert self._storage_int32_gain_spin is not None
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
@@ -1206,6 +1234,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "enabled": self._storage_enabled_checkbox.isChecked(),
                 "root": self._storage_root_edit.text().strip() or r"E:\data",
                 "file_duration_seconds": self._storage_duration_spin.value(),
+                "output_data_type": self._storage_output_data_type_combo.currentData(),
+                "int32_gain": self._storage_int32_gain_spin.value(),
                 "network": self._storage_network_edit.text().strip() or "SC",
                 "station": self._storage_station_edit.text().strip() or "S0001",
                 "location": self._storage_location_edit.text().strip() or "10",

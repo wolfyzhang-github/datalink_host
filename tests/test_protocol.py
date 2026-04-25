@@ -344,6 +344,8 @@ class ProtocolTests(unittest.TestCase):
                     "enabled": False,
                     "root": "./var/custom-storage",
                     "file_duration_seconds": 120,
+                    "output_data_type": "INT32",
+                    "int32_gain": 1000.0,
                     "network": "ZZ",
                     "station": "EDIT1",
                     "location": "20",
@@ -362,6 +364,8 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertEqual(channel_codes, updated["storage"]["channel_codes"])
         self.assertEqual("var/custom-storage", updated["storage"]["root"])
+        self.assertEqual("int32", updated["storage"]["output_data_type"])
+        self.assertEqual(1000.0, updated["storage"]["int32_gain"])
         self.assertEqual("{network}.{station}.{location}.{channel}", updated["datalink"]["stream_id_template"])
         self.assertEqual("192.0.2.10", updated["datalink"]["host"])
         self.assertEqual(18000, updated["datalink"]["port"])
@@ -568,6 +572,39 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(np.dtype("float32"), stream[0].data.dtype)
             self.assertEqual("FLOAT32", stream[0].stats.mseed.encoding)
 
+    def test_miniseed_writer_can_store_int32_with_gain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = MiniSeedWriter(
+                StorageSettings(
+                    enabled=True,
+                    root=Path(tmpdir),
+                    file_duration_seconds=1,
+                    output_data_type="int32",
+                    int32_gain=10.0,
+                )
+            )
+            frame = ProcessedFrame(
+                sample_rate=3.0,
+                raw=np.zeros((1, 3), dtype=np.float64),
+                unwrapped=np.zeros((1, 3), dtype=np.float64),
+                data1=np.array([[1.24, -2.56, 3.14]], dtype=np.float64),
+                data1_sample_rate=3.0,
+                data2=np.zeros((1, 0), dtype=np.float64),
+                data2_sample_rate=1.0,
+                received_at=1_700_000_000.0,
+                timestamp_us=1_700_000_000_000_000,
+            )
+
+            writer.write(frame)
+            writer.close()
+
+            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            self.assertEqual(1, len(data1_files))
+            stream = read(str(data1_files[0]))
+            self.assertEqual(np.dtype("int32"), stream[0].data.dtype)
+            self.assertEqual("INT32", stream[0].stats.mseed.encoding)
+            self.assertEqual([12, -26, 31], stream[0].data.tolist())
+
     def test_miniseed_writer_reports_storage_disk_usage(self) -> None:
         usage_result = namedtuple("usage", "total used free")
         with tempfile.TemporaryDirectory() as tmpdir, patch(
@@ -701,6 +738,27 @@ class ProtocolTests(unittest.TestCase):
         stream = read(io.BytesIO(payload), format="MSEED")
         self.assertEqual(np.dtype("float32"), stream[0].data.dtype)
         self.assertEqual("FLOAT32", stream[0].stats.mseed.encoding)
+        publisher.close()
+
+    def test_datalink_payload_can_use_int32_miniseed_encoding_with_gain(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(output_data_type="int32", int32_gain=10.0),
+        )
+        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.array([1.24, -2.56, 3.14], dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_000_000_000,
+        )
+
+        self.assertEqual(1, len(packets))
+        payload, _, _, _ = packets[0]
+        stream = read(io.BytesIO(payload), format="MSEED")
+        self.assertEqual(np.dtype("int32"), stream[0].data.dtype)
+        self.assertEqual("INT32", stream[0].stats.mseed.encoding)
+        self.assertEqual([12, -26, 31], stream[0].data.tolist())
         publisher.close()
 
     def test_datalink_serialization_splits_packets_to_match_smaller_limit(self) -> None:

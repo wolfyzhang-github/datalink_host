@@ -12,8 +12,9 @@ from typing import Any
 
 import numpy as np
 
-from datalink_host.core.config import AppSettings
 from datalink_host.core.clock import set_wall_time_provider, wall_time
+from datalink_host.core.config import AppSettings
+from datalink_host.core.output_encoding import normalize_int32_gain, normalize_output_data_type
 from datalink_host.core.validation import (
     parse_choice,
     parse_port,
@@ -307,6 +308,8 @@ class RuntimeService:
                     "enabled": self._settings.storage.enabled,
                     "root": str(self._settings.storage.root),
                     "file_duration_seconds": self._settings.storage.file_duration_seconds,
+                    "output_data_type": self._settings.storage.output_data_type,
+                    "int32_gain": self._settings.storage.int32_gain,
                     "network": self._settings.storage.network,
                     "station": self._settings.storage.station,
                     "location": self._settings.storage.location,
@@ -538,6 +541,10 @@ class RuntimeService:
                         storage["file_duration_seconds"],
                         "storage.file_duration_seconds",
                     )
+                if "output_data_type" in storage:
+                    new_storage.output_data_type = normalize_output_data_type(storage["output_data_type"])
+                if "int32_gain" in storage:
+                    new_storage.int32_gain = normalize_int32_gain(storage["int32_gain"])
                 if "network" in storage:
                     new_storage.network = str(storage["network"])
                 if "station" in storage:

@@ -15,7 +15,7 @@ from obspy import Stream, Trace, UTCDateTime
 
 from datalink_host.core.clock import wall_time
 from datalink_host.core.config import DataLinkSettings, StorageSettings
-
+from datalink_host.core.output_encoding import encode_samples_for_miniseed
 from datalink_host.models.messages import ProcessedFrame
 
 
@@ -193,7 +193,7 @@ class DataLinkPublisher:
             settings=settings,
             storage_settings=storage_settings,
         )
-        values = np.asarray(values, dtype=np.float32)
+        values = np.asarray(values)
         if values.size == 0:
             return []
         if timestamp_us is None:
@@ -221,7 +221,12 @@ class DataLinkPublisher:
         record_length_bytes: int,
         sequence_number: int | None = None,
     ) -> bytes:
-        trace = Trace(np.asarray(values, dtype=np.float32))
+        encoded = encode_samples_for_miniseed(
+            values,
+            output_data_type=storage_settings.output_data_type,
+            int32_gain=storage_settings.int32_gain,
+        )
+        trace = Trace(encoded.values)
         trace.stats.network = storage_settings.network
         trace.stats.station = storage_settings.station
         trace.stats.location = storage_settings.location
@@ -232,7 +237,7 @@ class DataLinkPublisher:
         buffer = io.BytesIO()
         write_kwargs: dict[str, object] = {
             "format": "MSEED",
-            "encoding": "FLOAT32",
+            "encoding": encoded.miniseed_encoding,
             "reclen": record_length_bytes,
         }
         if sequence_number is not None:

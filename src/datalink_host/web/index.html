@@ -485,6 +485,17 @@
                         <input id="storage-duration" class="form-control" type="number" min="1">
                       </div>
                       <div class="col-md-6">
+                        <label class="form-label" for="output-data-type">数据类型(存储/远传)</label>
+                        <select id="output-data-type" class="form-select">
+                          <option value="float32">float32</option>
+                          <option value="int32">INT32</option>
+                        </select>
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="int32-gain">增益</label>
+                        <input id="int32-gain" class="form-control" type="number" min="0.000001" step="any" value="1000000">
+                      </div>
+                      <div class="col-md-6">
                         <label class="form-label" for="storage-network">网络码</label>
                         <input id="storage-network" class="form-control" type="text">
                       </div>
@@ -708,6 +719,8 @@
       storageFields: document.getElementById("storage-fields"),
       storageRoot: document.getElementById("storage-root"),
       storageDuration: document.getElementById("storage-duration"),
+      outputDataType: document.getElementById("output-data-type"),
+      int32Gain: document.getElementById("int32-gain"),
       storageNetwork: document.getElementById("storage-network"),
       storageStation: document.getElementById("storage-station"),
       storageLocation: document.getElementById("storage-location"),
@@ -810,6 +823,7 @@
       els.logLevel.addEventListener("change", () => refreshLogs(true));
       els.dataMode.addEventListener("change", updateFormState);
       els.storageEnabled.addEventListener("change", updateFormState);
+      els.outputDataType.addEventListener("change", updateFormState);
       els.datalinkEnabled.addEventListener("change", updateFormState);
       els.captureEnabled.addEventListener("change", updateFormState);
       els.gnssEnabled.addEventListener("change", updateFormState);
@@ -963,6 +977,7 @@
       toggleFieldGroup(els.datalinkFields, true);
       toggleFieldGroup(els.captureFields, els.captureEnabled.checked);
       toggleFieldGroup(els.gnssFields, els.gnssEnabled.checked);
+      els.int32Gain.disabled = els.outputDataType.value !== "int32";
     }
 
     function renderChannelCodesTable(codes = [], channelCount = 8) {
@@ -1037,6 +1052,8 @@
       els.storageEnabled.checked = Boolean(storage.enabled);
       els.storageRoot.value = storage.root || "";
       els.storageDuration.value = storage.file_duration_seconds ?? 3600;
+      els.outputDataType.value = String(storage.output_data_type || "float32").toLowerCase();
+      els.int32Gain.value = storage.int32_gain ?? 1000000;
       els.storageNetwork.value = storage.network || "SC";
       els.storageStation.value = storage.station || "S0001";
       els.storageLocation.value = storage.location || "10";
@@ -1114,6 +1131,8 @@
           enabled: els.storageEnabled.checked,
           root: els.storageRoot.value.trim() || "E:\\data",
           file_duration_seconds: readNumber(els.storageDuration, "单文件时长"),
+          output_data_type: els.outputDataType.value,
+          int32_gain: readNumber(els.int32Gain, "增益"),
           network: els.storageNetwork.value.trim() || "SC",
           station: els.storageStation.value.trim() || "S0001",
           location: els.storageLocation.value.trim() || "10",

@@ -13,6 +13,7 @@ from obspy import Stream, Trace, UTCDateTime
 
 from datalink_host.core.config import StorageSettings
 from datalink_host.core.logging import get_recent_logs
+from datalink_host.core.output_encoding import encode_samples_for_miniseed
 from datalink_host.models.messages import ProcessedFrame
 from datalink_host.services.gnss_time import format_timestamp_iso_utc
 
@@ -98,7 +99,7 @@ class MiniSeedWriter:
                     self._append_segment(
                         key=key,
                         state=state,
-                        values=np.asarray(channels[channel_index], dtype=np.float32),
+                        values=np.asarray(channels[channel_index]),
                         timestamp_us=frame.timestamp_us,
                     )
                     self._flush_buffer(key, state, settings)
@@ -203,17 +204,21 @@ class MiniSeedWriter:
             channel_code=channel_code,
             extension="mseed",
         )
-        encoded_values = np.asarray(values, dtype=np.float32)
-        trace = Trace(encoded_values)
+        encoded = encode_samples_for_miniseed(
+            values,
+            output_data_type=settings.output_data_type,
+            int32_gain=settings.int32_gain,
+        )
+        trace = Trace(encoded.values)
         trace.stats.network = settings.network
         trace.stats.station = settings.station
         trace.stats.location = settings.location
         trace.stats.channel = channel_code
         trace.stats.starttime = start_time
         trace.stats.sampling_rate = sample_rate
-        end_time = start_time + (encoded_values.size / max(sample_rate, 1e-9))
+        end_time = start_time + (encoded.values.size / max(sample_rate, 1e-9))
         output_path = output_dir / filename
-        mseed_payload = self._encode_miniseed(trace)
+        mseed_payload = self._encode_miniseed(trace, encoded.miniseed_encoding)
         log_filename = self._build_filename(
             settings=settings,
             timestamp=timestamp,
@@ -272,8 +277,8 @@ class MiniSeedWriter:
             format_timestamp_iso_utc(state.anchor_timestamp_us),
             "-" if anchor_offset_seconds is None else f"{anchor_offset_seconds:.6f}",
             sample_rate,
-            encoded_values.size,
-            encoded_values.size / max(sample_rate, 1e-9),
+            encoded.values.size,
+            encoded.values.size / max(sample_rate, 1e-9),
             settings.file_duration_seconds,
             state.segments_appended,
             state.samples_appended,
@@ -286,16 +291,19 @@ class MiniSeedWriter:
             "MiniSEED 文件已落盘：写入完成后可用该完整路径定位文件；文件名中的timestamp就是上一步由start_utc截断到毫秒得到的值。"
             "完整路径(path)=%s 流(stream)=%s 起始UTC(start_utc)=%s 结束UTC(end_utc)=%s "
             "时长秒(duration_s)=%.3f 样本数(samples)=%s 采样率(sample_rate_hz)=%.3f "
-            "数据类型(dtype)=%s 编码(encoding)=FLOAT32 文件名(filename)=%s "
-            "文件名时间字段(timestamp)=%s 已落盘chunk数(chunks_written)=%s",
+            "输出模式(output_data_type)=%s 增益(int32_gain)=%s 数据类型(dtype)=%s 编码(encoding)=%s "
+            "文件名(filename)=%s 文件名时间字段(timestamp)=%s 已落盘chunk数(chunks_written)=%s",
             output_path,
             self._stream_label(key),
             format_timestamp_iso_utc(start_time.ns // 1000),
             format_timestamp_iso_utc(end_time.ns // 1000),
-            encoded_values.size / max(sample_rate, 1e-9),
-            encoded_values.size,
+            encoded.values.size / max(sample_rate, 1e-9),
+            encoded.values.size,
             sample_rate,
-            encoded_values.dtype,
+            settings.output_data_type,
+            f"{settings.int32_gain:g}",
+            encoded.values.dtype,
+            encoded.miniseed_encoding,
             filename,
             timestamp,
             state.chunks_written,
@@ -303,9 +311,9 @@ class MiniSeedWriter:
         (output_dir / log_filename).write_text(log_content, encoding="utf-8")
 
     @staticmethod
-    def _encode_miniseed(trace: Trace) -> bytes:
+    def _encode_miniseed(trace: Trace, encoding: str) -> bytes:
         buffer = io.BytesIO()
-        Stream([trace]).write(buffer, format="MSEED", encoding="FLOAT32")
+        Stream([trace]).write(buffer, format="MSEED", encoding=encoding)
         return buffer.getvalue()
 
     @staticmethod

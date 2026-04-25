@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from datalink_host.core.paths import default_capture_path
+from datalink_host.core.output_encoding import DEFAULT_INT32_GAIN
 
 
 @dataclass(slots=True)
@@ -51,6 +52,8 @@ class StorageSettings:
     enabled: bool = False
     root: Path = Path(r"E:\data")
     file_duration_seconds: int = 3600
+    output_data_type: str = "float32"
+    int32_gain: float = DEFAULT_INT32_GAIN
     network: str = "SC"
     station: str = "S0001"
     location: str = "10"
