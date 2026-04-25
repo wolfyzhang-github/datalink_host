@@ -62,7 +62,7 @@ datalink-host-runtime
 默认行为：
 
 - 数据链路默认工作在“主动连接设备”模式
-- 默认尝试连接设备 `127.0.0.1:3677`
+- 默认尝试连接设备 `127.0.0.1:6340`
 - 控制服务监听 `0.0.0.0:19001`
 - 本地一键调试入口会自动切回监听模式，供模拟发送端接入
 
@@ -133,13 +133,13 @@ printf '%s\n' '{"type":"set_feature","payload":{"storage_enabled":true,"datalink
 更新存储配置：
 
 ```bash
-printf '%s\n' '{"type":"set_config","payload":{"storage":{"enabled":true,"root":"./var/storage","file_duration_seconds":60,"network":"SC","station":"S0001","location":"10"}}}' | nc 127.0.0.1 19001
+printf '%s\n' '{"type":"set_config","payload":{"storage":{"enabled":true,"root":"E:\\data","file_duration_seconds":60,"network":"SC","station":"S0001","location":"10"}}}' | nc 127.0.0.1 19001
 ```
 
 更新 DataLink 配置：
 
 ```bash
-printf '%s\n' '{"type":"set_config","payload":{"datalink":{"enabled":true,"host":"127.0.0.1","port":16000,"ack_required":true,"send_data2":false}}}' | nc 127.0.0.1 19001
+printf '%s\n' '{"type":"set_config","payload":{"datalink":{"enabled":true,"host":"10.2.16.61","port":16000,"ack_required":true,"send_data2":false}}}' | nc 127.0.0.1 19001
 ```
 
 启用原始 TCP 抓包：

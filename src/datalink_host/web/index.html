@@ -210,8 +210,7 @@
               <div class="col-sm-6 col-lg-3">
                 <label class="form-label" for="wave-mode">波形来源</label>
                 <select id="wave-mode" class="form-select">
-                  <option value="raw">原始值</option>
-                  <option value="unwrapped" selected>相位展开</option>
+                  <option value="raw" selected>原始值</option>
                   <option value="data1">降采样1</option>
                   <option value="data2">降采样2</option>
                 </select>
@@ -393,7 +392,7 @@
                       </div>
                       <div class="col-md-6">
                         <label class="form-label" for="remote-host">设备地址</label>
-                        <input id="remote-host" class="form-control" type="text" placeholder="169.254.56.252">
+                        <input id="remote-host" class="form-control" type="text" placeholder="127.0.0.1">
                       </div>
                       <div class="col-md-6">
                         <label class="form-label" for="remote-port">设备端口</label>
@@ -479,7 +478,7 @@
                     <div class="row g-3" id="storage-fields">
                       <div class="col-12">
                         <label class="form-label" for="storage-root">存储目录</label>
-                        <input id="storage-root" class="form-control" type="text" placeholder="./var/storage">
+                        <input id="storage-root" class="form-control" type="text" placeholder="E:\data">
                       </div>
                       <div class="col-md-6">
                         <label class="form-label" for="storage-duration">单文件时长(秒)</label>
@@ -498,8 +497,18 @@
                         <input id="storage-location" class="form-control" type="text">
                       </div>
                       <div class="col-12">
-                        <label class="form-label" for="storage-channel-codes">通道码</label>
-                        <textarea id="storage-channel-codes" class="form-control" rows="2" placeholder="HSH, HSZ, HS1, HS2, HS3, HS4, HTH, HTZ"></textarea>
+                        <label class="form-label">通道码</label>
+                        <div class="table-responsive">
+                          <table class="table table-sm align-middle mb-0">
+                            <thead>
+                              <tr>
+                                <th scope="col" style="width: 120px;">通道</th>
+                                <th scope="col">通道码</th>
+                              </tr>
+                            </thead>
+                            <tbody id="storage-channel-codes-body"></tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -521,7 +530,7 @@
                     <div class="row g-3" id="datalink-fields">
                       <div class="col-md-6">
                         <label class="form-label" for="datalink-host">远传主机</label>
-                        <input id="datalink-host" class="form-control" type="text" placeholder="127.0.0.1">
+                        <input id="datalink-host" class="form-control" type="text" placeholder="10.2.16.61">
                       </div>
                       <div class="col-md-6">
                         <label class="form-label" for="datalink-port">远传端口</label>
@@ -627,7 +636,7 @@
       pollInFlight: false,
       refreshMs: 1000,
       windowSeconds: 20,
-      maxPoints: 200000,
+      maxPoints: 5000,
       maxPackets: 20,
       wavePayload: null,
       latestStatus: null,
@@ -702,7 +711,7 @@
       storageNetwork: document.getElementById("storage-network"),
       storageStation: document.getElementById("storage-station"),
       storageLocation: document.getElementById("storage-location"),
-      storageChannelCodes: document.getElementById("storage-channel-codes"),
+      storageChannelCodesBody: document.getElementById("storage-channel-codes-body"),
       datalinkEnabled: document.getElementById("datalink-enabled"),
       datalinkFields: document.getElementById("datalink-fields"),
       datalinkHost: document.getElementById("datalink-host"),
@@ -940,17 +949,6 @@
       return numeric;
     }
 
-    function parseList(value, fieldName) {
-      const items = value
-        .split(/[\n,]+/)
-        .map((item) => item.trim())
-        .filter(Boolean);
-      if (items.length === 0) {
-        throw new Error(`${fieldName}不能为空`);
-      }
-      return items;
-    }
-
     function updateFormState() {
       const clientMode = els.dataMode.value === "client";
       els.listenHost.disabled = clientMode;
@@ -965,6 +963,45 @@
       toggleFieldGroup(els.datalinkFields, true);
       toggleFieldGroup(els.captureFields, els.captureEnabled.checked);
       toggleFieldGroup(els.gnssFields, els.gnssEnabled.checked);
+    }
+
+    function renderChannelCodesTable(codes = [], channelCount = 8) {
+      const count = Math.max(1, Number(channelCount) || codes.length || 8);
+      els.storageChannelCodesBody.innerHTML = "";
+      for (let index = 0; index < count; index += 1) {
+        const row = document.createElement("tr");
+        const channelCell = document.createElement("th");
+        channelCell.scope = "row";
+        channelCell.className = "text-secondary";
+        channelCell.textContent = `CH${index + 1}`;
+
+        const codeCell = document.createElement("td");
+        const input = document.createElement("input");
+        input.className = "form-control form-control-sm";
+        input.type = "text";
+        input.value = codes[index] || "";
+        input.dataset.channelCode = String(index);
+        input.setAttribute("aria-label", `CH${index + 1} 通道码`);
+        codeCell.appendChild(input);
+
+        row.appendChild(channelCell);
+        row.appendChild(codeCell);
+        els.storageChannelCodesBody.appendChild(row);
+      }
+    }
+
+    function collectChannelCodes() {
+      const inputs = Array.from(els.storageChannelCodesBody.querySelectorAll("input[data-channel-code]"));
+      if (inputs.length === 0) {
+        throw new Error("通道码不能为空");
+      }
+      return inputs.map((input, index) => {
+        const code = input.value.trim();
+        if (!code) {
+          throw new Error(`CH${index + 1} 通道码不能为空`);
+        }
+        return code;
+      });
     }
 
     function toggleFieldGroup(container, enabled) {
@@ -1003,9 +1040,10 @@
       els.storageNetwork.value = storage.network || "SC";
       els.storageStation.value = storage.station || "S0001";
       els.storageLocation.value = storage.location || "10";
-      els.storageChannelCodes.value = Array.isArray(storage.channel_codes)
-        ? storage.channel_codes.join(", ")
-        : "";
+      renderChannelCodesTable(
+        Array.isArray(storage.channel_codes) ? storage.channel_codes : [],
+        protocol.channels
+      );
       els.datalinkEnabled.checked = Boolean(datalink.enabled);
       els.datalinkHost.value = datalink.host || "";
       els.datalinkPort.value = datalink.port ?? "";
@@ -1017,7 +1055,7 @@
       els.gnssEnabled.checked = Boolean(gnss.enabled);
       els.gnssPort.value = gnss.port || "";
       els.gnssBaudrate.value = gnss.baudrate ?? 115200;
-      els.gnssMode.value = gnss.mode || "debug";
+      els.gnssMode.value = gnss.mode || "deploy";
       els.gnssPoll.value = gnss.poll_interval_seconds ?? 0.1;
       els.gnssTimestampInterval.value = gnss.packet_timestamp_timeout_seconds ?? gnss.timestamp_interval_seconds ?? 1.0;
       updateFormState();
@@ -1060,7 +1098,7 @@
           mode: els.dataMode.value,
           host: els.listenHost.value.trim() || "0.0.0.0",
           port: readNumber(els.listenPort, "本地监听端口"),
-          remote_host: els.remoteHost.value.trim() || "169.254.56.252",
+          remote_host: els.remoteHost.value.trim() || "127.0.0.1",
           remote_port: readNumber(els.remotePort, "设备端口"),
         },
         protocol: {
@@ -1074,16 +1112,16 @@
         },
         storage: {
           enabled: els.storageEnabled.checked,
-          root: els.storageRoot.value.trim() || "./var/storage",
+          root: els.storageRoot.value.trim() || "E:\\data",
           file_duration_seconds: readNumber(els.storageDuration, "单文件时长"),
           network: els.storageNetwork.value.trim() || "SC",
           station: els.storageStation.value.trim() || "S0001",
           location: els.storageLocation.value.trim() || "10",
-          channel_codes: parseList(els.storageChannelCodes.value, "通道码"),
+          channel_codes: collectChannelCodes(),
         },
         datalink: {
           enabled: els.datalinkEnabled.checked,
-          host: els.datalinkHost.value.trim() || "127.0.0.1",
+          host: els.datalinkHost.value.trim() || "10.2.16.61",
           port: readNumber(els.datalinkPort, "远传端口"),
           stream_id_template: els.datalinkStreamTemplate.value.trim() || "{network}_{station}_{location}_{channel}/MSEED",
           ack_required: els.ackRequired.checked,
@@ -1443,6 +1481,7 @@
       state.refreshMs = Number(els.refreshMs.value);
       state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 120);
       state.maxPackets = Number(els.maxPackets.value);
+      renderChannelCodesTable(["HSH", "HSZ", "HS1", "HS2", "HS3", "HS4", "HTH", "HTZ"], 8);
       updateFormState();
       const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
       if (hasHttpOrigin && window.location.port) {

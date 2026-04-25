@@ -9,7 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from datalink_host.core.config import AppSettings
 from datalink_host.core.logging import get_recent_logs
 from datalink_host.models.messages import RuntimeSnapshot
-from datalink_host.services.runtime import RuntimeService, slice_for_plot
+from datalink_host.services.runtime import RuntimeService, downsample_for_plot, slice_for_plot
 
 
 PROCESSING_QUEUE_CAPACITY = 32
@@ -96,7 +96,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self._runtime = runtime
         self._settings = settings
-        self._data_mode = "unwrapped"
+        self._data_mode = "raw"
         self._status_labels: dict[str, list[QtWidgets.QLabel]] = {}
         self._status_lamps: dict[str, list[IndicatorLamp]] = {}
         self._plots: list[pg.PlotDataItem | None] = [None] * self._settings.protocol.channels
@@ -137,7 +137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_network_edit: QtWidgets.QLineEdit | None = None
         self._storage_station_edit: QtWidgets.QLineEdit | None = None
         self._storage_location_edit: QtWidgets.QLineEdit | None = None
-        self._storage_channel_codes_edit: QtWidgets.QLineEdit | None = None
+        self._storage_channel_codes_table: QtWidgets.QTableWidget | None = None
 
         self._datalink_enabled_checkbox: QtWidgets.QCheckBox | None = None
         self._datalink_host_edit: QtWidgets.QLineEdit | None = None
@@ -249,7 +249,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(
             self._build_page_intro(
                 "波形显示",
-                "按参考布局展示 8 路通道波形，支持在原始、相位展开、降采样1、降采样2之间切换。",
+                "按参考布局展示 8 路通道波形，支持在原始、降采样1、降采样2之间切换。",
             )
         )
 
@@ -645,8 +645,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_network_edit = QtWidgets.QLineEdit(card)
         self._storage_station_edit = QtWidgets.QLineEdit(card)
         self._storage_location_edit = QtWidgets.QLineEdit(card)
-        self._storage_channel_codes_edit = QtWidgets.QLineEdit(card)
-        self._storage_channel_codes_edit.setPlaceholderText("HSH, HSZ, HS1, HS2, HS3, HS4, HTH, HTZ")
+        self._storage_channel_codes_table = self._create_channel_codes_table(card)
 
         self._capture_enabled_checkbox = QtWidgets.QCheckBox("启用原始 TCP 抓包", card)
         self._capture_enabled_checkbox.toggled.connect(self._update_form_state)
@@ -664,7 +663,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("网络码", self._storage_network_edit)
         form.addRow("台站码", self._storage_station_edit)
         form.addRow("位置码", self._storage_location_edit)
-        form.addRow("通道码", self._storage_channel_codes_edit)
+        form.addRow("通道码", self._storage_channel_codes_table)
         form.addRow(self._capture_enabled_checkbox)
         form.addRow("抓包文件", capture_widget)
         layout.addLayout(form)
@@ -803,6 +802,29 @@ class MainWindow(QtWidgets.QMainWindow):
             layout.addRow(label_text, self._create_snapshot_label(key, card))
         return card
 
+    def _create_channel_codes_table(self, parent: QtWidgets.QWidget) -> QtWidgets.QTableWidget:
+        table = QtWidgets.QTableWidget(self._settings.protocol.channels, 2, parent)
+        table.setHorizontalHeaderLabels(["通道", "通道码"])
+        table.verticalHeader().setVisible(False)
+        table.setAlternatingRowColors(True)
+        table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            | QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed
+            | QtWidgets.QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
+        for row in range(self._settings.protocol.channels):
+            channel_item = QtWidgets.QTableWidgetItem(f"CH{row + 1}")
+            channel_item.setFlags(channel_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 0, channel_item)
+            table.setItem(row, 1, QtWidgets.QTableWidgetItem(""))
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        table.setMinimumHeight(min(320, 34 * (self._settings.protocol.channels + 1)))
+        table.setMaximumHeight(360)
+        return table
+
     def _create_plot_widget(self, *, parent: QtWidgets.QWidget | None = None) -> pg.PlotWidget:
         plot = pg.PlotWidget(parent=parent)
         plot.setBackground("w")
@@ -822,10 +844,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _create_mode_selector(self, parent: QtWidgets.QWidget) -> QtWidgets.QComboBox:
         combo = QtWidgets.QComboBox(parent)
         combo.addItem("原始数据", "raw")
-        combo.addItem("相位展开", "unwrapped")
         combo.addItem("降采样1", "data1")
         combo.addItem("降采样2", "data2")
-        combo.setCurrentIndex(1)
+        combo.setCurrentIndex(0)
         combo.currentIndexChanged.connect(partial(self._on_mode_selector_changed, combo))
         self._mode_selectors.append(combo)
         return combo
@@ -894,7 +915,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
-        assert self._storage_channel_codes_edit is not None
+        assert self._storage_channel_codes_table is not None
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
@@ -945,7 +966,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_network_edit.setText(storage["network"])
         self._storage_station_edit.setText(storage["station"])
         self._storage_location_edit.setText(storage["location"])
-        self._storage_channel_codes_edit.setText(", ".join(storage.get("channel_codes", [])))
+        self._set_channel_codes(storage.get("channel_codes", []))
 
         self._datalink_enabled_checkbox.setChecked(datalink["enabled"])
         self._datalink_host_edit.setText(datalink["host"])
@@ -1057,7 +1078,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._storage_network_edit,
                 self._storage_station_edit,
                 self._storage_location_edit,
-                self._storage_channel_codes_edit,
+                self._storage_channel_codes_table,
             ],
         )
         self._set_section_enabled(
@@ -1096,9 +1117,25 @@ class MainWindow(QtWidgets.QMainWindow):
             if widget is not None:
                 widget.setEnabled(enabled)
 
-    @staticmethod
-    def _parse_channel_codes(text: str) -> list[str]:
-        return [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
+    def _set_channel_codes(self, codes: list[str] | tuple[str, ...]) -> None:
+        assert self._storage_channel_codes_table is not None
+        for row in range(self._settings.protocol.channels):
+            item = self._storage_channel_codes_table.item(row, 1)
+            if item is None:
+                item = QtWidgets.QTableWidgetItem("")
+                self._storage_channel_codes_table.setItem(row, 1, item)
+            item.setText(str(codes[row]) if row < len(codes) else "")
+
+    def _channel_codes_from_table(self) -> list[str]:
+        assert self._storage_channel_codes_table is not None
+        codes: list[str] = []
+        for row in range(self._settings.protocol.channels):
+            item = self._storage_channel_codes_table.item(row, 1)
+            code = "" if item is None else item.text().strip()
+            if not code:
+                raise ValueError(f"CH{row + 1} 通道码不能为空")
+            codes.append(code)
+        return codes
 
     def _apply_runtime_config(self) -> None:
         assert self._data1_rate_spin is not None
@@ -1121,7 +1158,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
         assert self._storage_location_edit is not None
-        assert self._storage_channel_codes_edit is not None
+        assert self._storage_channel_codes_table is not None
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
@@ -1137,6 +1174,13 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._gnss_poll_spin is not None
         assert self._gnss_timestamp_interval_spin is not None
 
+        try:
+            channel_codes = self._channel_codes_from_table()
+        except ValueError as exc:
+            self._set_feedback(f"应用失败: {exc}", is_error=True)
+            QtWidgets.QMessageBox.critical(self, "应用配置失败", str(exc))
+            return
+
         payload = {
             "processing": {
                 "data1_rate": self._data1_rate_spin.value(),
@@ -1146,7 +1190,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "mode": self._data_server_mode_combo.currentData(),
                 "host": self._data_host_edit.text().strip() or "0.0.0.0",
                 "port": self._data_port_spin.value(),
-                "remote_host": self._data_remote_host_edit.text().strip() or "169.254.56.252",
+                "remote_host": self._data_remote_host_edit.text().strip() or "127.0.0.1",
                 "remote_port": self._data_remote_port_spin.value(),
             },
             "protocol": {
@@ -1160,16 +1204,16 @@ class MainWindow(QtWidgets.QMainWindow):
             },
             "storage": {
                 "enabled": self._storage_enabled_checkbox.isChecked(),
-                "root": self._storage_root_edit.text().strip() or "./var/storage",
+                "root": self._storage_root_edit.text().strip() or r"E:\data",
                 "file_duration_seconds": self._storage_duration_spin.value(),
                 "network": self._storage_network_edit.text().strip() or "SC",
                 "station": self._storage_station_edit.text().strip() or "S0001",
                 "location": self._storage_location_edit.text().strip() or "10",
-                "channel_codes": self._parse_channel_codes(self._storage_channel_codes_edit.text()),
+                "channel_codes": channel_codes,
             },
             "datalink": {
                 "enabled": self._datalink_enabled_checkbox.isChecked(),
-                "host": self._datalink_host_edit.text().strip() or "127.0.0.1",
+                "host": self._datalink_host_edit.text().strip() or "10.2.16.61",
                 "port": self._datalink_port_spin.value(),
                 "stream_id_template": self._datalink_stream_template_edit.text().strip()
                 or "{network}_{station}_{location}_{channel}/MSEED",
@@ -1368,7 +1412,11 @@ class MainWindow(QtWidgets.QMainWindow):
             sample_rate: float | None,
         ) -> tuple[np.ndarray | None, float | None]:
             max_points = self._plot_window_points(sample_rate)
-            return slice_for_plot(data, max_points), sample_rate
+            windowed = slice_for_plot(data, max_points)
+            display_limit = max(int(self._settings.gui.display_max_points_per_trace), 1)
+            plotted, step = downsample_for_plot(windowed, display_limit)
+            effective_rate = sample_rate / step if sample_rate is not None and sample_rate > 0 else sample_rate
+            return plotted, effective_rate
 
         if self._data_mode == "raw":
             return window(snapshot.latest_raw, snapshot.source_sample_rate)
@@ -1376,7 +1424,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return window(snapshot.latest_data1, snapshot.data1_rate)
         if self._data_mode == "data2":
             return window(snapshot.latest_data2, snapshot.data2_rate)
-        return window(snapshot.latest_unwrapped, snapshot.source_sample_rate)
+        return window(snapshot.latest_raw, snapshot.source_sample_rate)
 
     def _plot_window_points(self, sample_rate: float | None) -> int:
         seconds = (

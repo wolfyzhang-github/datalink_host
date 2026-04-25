@@ -1329,7 +1329,7 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertTrue(payload["recent_packets"])
         self.assertEqual(2, payload["waveform"]["points"])
-        self.assertEqual([[2.0, 3.0], [5.0, 6.0]], payload["waveform"]["series"])
+        self.assertEqual([[1.0, 3.0], [4.0, 6.0]], payload["waveform"]["series"])
         self.assertIn("000000", payload["recent_packets"][0]["hex_dump"])
         runtime._datalink.close()
 

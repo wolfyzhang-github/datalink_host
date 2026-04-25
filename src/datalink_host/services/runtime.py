@@ -1089,13 +1089,12 @@ class RuntimeService:
         max_points: int,
         window_seconds: float | None,
     ) -> tuple[np.ndarray | None, float | None]:
-        point_limit = max(int(max_points), 1)
         if window_seconds is not None and sample_rate is not None and sample_rate > 0:
-            point_limit = min(
-                point_limit,
-                max(1, int(round(sample_rate * max(window_seconds, 0.0)))),
-            )
-        return slice_for_plot(data, point_limit), sample_rate
+            window_points = max(1, int(round(sample_rate * max(window_seconds, 0.0))))
+            data = slice_for_plot(data, window_points)
+        plotted, step = downsample_for_plot(data, max_points)
+        effective_rate = sample_rate / step if sample_rate is not None and sample_rate > 0 else sample_rate
+        return plotted, effective_rate
 
 
 def slice_for_plot(data: np.ndarray | None, max_points: int) -> np.ndarray | None:
@@ -1104,6 +1103,18 @@ def slice_for_plot(data: np.ndarray | None, max_points: int) -> np.ndarray | Non
     if data.shape[1] <= max_points:
         return data
     return data[:, -max_points:]
+
+
+def downsample_for_plot(data: np.ndarray | None, max_points: int) -> tuple[np.ndarray | None, int]:
+    if data is None or data.size == 0:
+        return data, 1
+    point_limit = max(int(max_points), 1)
+    point_count = data.shape[1]
+    if point_count <= point_limit:
+        return data, 1
+    step = max(int(np.ceil(point_count / point_limit)), 1)
+    indices = np.arange(point_count - 1, -1, -step, dtype=np.int64)[::-1]
+    return data[:, indices], step
 
 
 def format_packet_hex_dump(packet_bytes: bytes, max_bytes: int = MONITOR_PACKET_DUMP_LIMIT_BYTES) -> tuple[str, int]:

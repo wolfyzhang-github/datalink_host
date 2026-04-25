@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from datalink_host.core.paths import default_capture_path, default_storage_root
+from datalink_host.core.paths import default_capture_path
 
 
 @dataclass(slots=True)
@@ -23,8 +23,8 @@ class DataServerSettings:
     mode: str = "client"
     host: str = "0.0.0.0"
     port: int = 3677
-    remote_host: str = "169.254.56.252"
-    remote_port: int = 3677
+    remote_host: str = "127.0.0.1"
+    remote_port: int = 6340
     recv_size: int = 65536
     reconnect_interval_seconds: float = 3.0
     connect_timeout_seconds: float = 5.0
@@ -49,7 +49,7 @@ class ProcessingSettings:
 @dataclass(slots=True)
 class StorageSettings:
     enabled: bool = False
-    root: Path = field(default_factory=default_storage_root)
+    root: Path = Path(r"E:\data")
     file_duration_seconds: int = 3600
     network: str = "SC"
     station: str = "S0001"
@@ -69,7 +69,7 @@ class StorageSettings:
 @dataclass(slots=True)
 class DataLinkSettings:
     enabled: bool = False
-    host: str = "127.0.0.1"
+    host: str = "10.2.16.61"
     port: int = 16000
     stream_id_template: str = "{network}_{station}_{location}_{channel}/MSEED"
     ack_required: bool = True
@@ -81,12 +81,12 @@ class DataLinkSettings:
 
 @dataclass(slots=True)
 class GnssSettings:
-    enabled: bool = False
+    enabled: bool = True
     port: str = ""
     baudrate: int = 115200
-    mode: str = "debug"
+    mode: str = "deploy"
     poll_interval_seconds: float = 0.1
-    timestamp_interval_seconds: float = 0.1
+    timestamp_interval_seconds: float = 1.0
     packet_timestamp_timeout_seconds: float = 1.0
     serial_timeout_seconds: float = 0.1
     command: str = "timestamp"
@@ -95,7 +95,7 @@ class GnssSettings:
 @dataclass(slots=True)
 class WebSettings:
     enabled: bool = True
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 18080
 
 
@@ -105,6 +105,7 @@ class GuiSettings:
     plot_window_seconds: float = 20.0
     plot_history_seconds: float = 120.0
     max_points_per_trace: int = 200000
+    display_max_points_per_trace: int = 5000
 
 
 @dataclass(slots=True)

@@ -33,7 +33,7 @@ class PackagingSupportTests(unittest.TestCase):
             asset_path = assets_dir / asset_name
             self.assertGreater(asset_path.stat().st_size, 0)
 
-    def test_default_paths_follow_runtime_override(self) -> None:
+    def test_default_paths_and_deployment_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with patch.dict(os.environ, {"DATALINK_HOST_HOME": temp_dir}, clear=False):
                 settings = AppSettings()
@@ -41,8 +41,14 @@ class PackagingSupportTests(unittest.TestCase):
                 self.assertEqual(expected_root, runtime_root())
                 self.assertEqual(expected_root / "var" / "storage", default_storage_root())
                 self.assertEqual(expected_root / "var" / "captures" / "session.dlhcap", default_capture_path())
-                self.assertEqual(expected_root / "var" / "storage", settings.storage.root)
+                self.assertEqual(Path(r"E:\data"), settings.storage.root)
                 self.assertEqual(expected_root / "var" / "captures" / "session.dlhcap", settings.capture.path)
+                self.assertEqual("127.0.0.1", settings.data_server.remote_host)
+                self.assertEqual(6340, settings.data_server.remote_port)
+                self.assertTrue(settings.gnss.enabled)
+                self.assertEqual("deploy", settings.gnss.mode)
+                self.assertEqual(1.0, settings.gnss.packet_timestamp_timeout_seconds)
+                self.assertEqual("10.2.16.61", settings.datalink.host)
 
     def test_self_check_writes_success_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
