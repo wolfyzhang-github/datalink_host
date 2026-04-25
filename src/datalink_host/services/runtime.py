@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from datalink_host.core.config import AppSettings
+from datalink_host.core.clock import set_wall_time_provider, wall_time
 from datalink_host.core.validation import (
     parse_choice,
     parse_port,
@@ -65,6 +66,8 @@ class RuntimeService:
         self._pipeline = ProcessingPipeline(settings.processing)
         self._storage = MiniSeedWriter(settings.storage)
         self._datalink = DataLinkPublisher(settings.datalink, settings.storage)
+        self._gnss_time = GnssTimeService(settings.gnss)
+        set_wall_time_provider(self._wall_time_seconds)
         self._storage_sink = BackgroundFrameSink(
             "storage",
             self._storage.write,
@@ -81,7 +84,6 @@ class RuntimeService:
             queue_wait_warning_ms=DATALINK_SINK_QUEUE_WAIT_WARNING_MS,
             handle_warning_ms=DATALINK_SINK_HANDLE_WARNING_MS,
         )
-        self._gnss_time = GnssTimeService(settings.gnss)
         self._capture = PacketCaptureWriter(settings.capture.path) if settings.capture.enabled else None
         self._queue: queue.Queue[ChannelFrame] = queue.Queue(maxsize=32)
         self._lock = threading.Lock()
@@ -127,7 +129,7 @@ class RuntimeService:
             latest_unwrapped=None,
             latest_data1=None,
             latest_data2=None,
-            updated_at=time.time(),
+            updated_at=wall_time(),
         )
         self._data_server = self._build_data_server()
         self._control_server = TcpControlServer(
@@ -157,6 +159,13 @@ class RuntimeService:
             on_bytes_received=self._add_bytes_received,
             on_error=self._set_error,
         )
+
+    def _wall_time_seconds(self) -> float:
+        if self._settings.gnss.enabled:
+            gnss_time_us = self._gnss_time.current_time_us()
+            if gnss_time_us is not None:
+                return gnss_time_us / 1_000_000.0
+        return time.time()
 
     def _restart_data_server(self) -> None:
         was_active = self._data_server_active
@@ -221,7 +230,7 @@ class RuntimeService:
         with self._lock:
             self._snapshot.data_connected = False
             self._snapshot.queue_depth = 0
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
 
     def snapshot(self) -> RuntimeSnapshot:
         storage_stats = self._storage_sink.stats()
@@ -606,7 +615,7 @@ class RuntimeService:
                     self._capture = PacketCaptureWriter(self._settings.capture.path)
                 self._snapshot.capture_enabled = self._settings.capture.enabled
 
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
         if restart_data_server:
             self._restart_data_server()
         return self.current_config()
@@ -641,7 +650,7 @@ class RuntimeService:
             with self._lock:
                 self._snapshot.frames_dropped += 1
                 self._snapshot.last_error = "Processing queue is full"
-                self._snapshot.updated_at = time.time()
+                self._snapshot.updated_at = wall_time()
             LOGGER.warning("Processing queue is full; dropping decoded frame")
             return
         self._frames_enqueued += 1
@@ -661,7 +670,7 @@ class RuntimeService:
             self._snapshot.packets_received += 1
             self._snapshot.source_sample_rate = frame.sample_rate
             self._snapshot.queue_depth = self._queue.qsize()
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
             queue_depth = self._snapshot.queue_depth
         if queue_depth >= QUEUE_BACKLOG_WARNING_DEPTH and queue_depth % QUEUE_BACKLOG_WARNING_DEPTH == 0:
             LOGGER.warning(
@@ -909,7 +918,7 @@ class RuntimeService:
                         processed.data2_sample_rate,
                     )
                     self._snapshot.queue_depth = queue_depth_after
-                    self._snapshot.updated_at = time.time()
+                    self._snapshot.updated_at = wall_time()
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Processing pipeline failed")
                 self._set_error(f"Processing pipeline failed: {exc}")
@@ -941,23 +950,23 @@ class RuntimeService:
                 self._snapshot.latest_unwrapped = None
                 self._snapshot.latest_data1 = None
                 self._snapshot.latest_data2 = None
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
 
     def _set_control_connected(self, connected: bool) -> None:
         with self._lock:
             self._snapshot.control_connected = connected
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
 
     def _add_bytes_received(self, count: int) -> None:
         with self._lock:
             self._snapshot.bytes_received += count
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
 
     def _set_error(self, message: str) -> None:
         LOGGER.error("%s", message)
         with self._lock:
             self._snapshot.last_error = message
-            self._snapshot.updated_at = time.time()
+            self._snapshot.updated_at = wall_time()
 
     def _handle_control_message(self, request: dict[str, Any]) -> dict[str, Any]:
         message_type = request.get("type")

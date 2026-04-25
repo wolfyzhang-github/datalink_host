@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from obspy import Stream, Trace, UTCDateTime
 
+from datalink_host.core.clock import wall_time
 from datalink_host.core.config import DataLinkSettings, StorageSettings
 
 from datalink_host.models.messages import ProcessedFrame
@@ -393,7 +394,7 @@ class DataLinkPublisher:
                     )
             self._stats.packets_sent += 1
             self._stats.bytes_sent += len(item.payload)
-            self._stats.last_send_at = time.time()
+            self._stats.last_send_at = wall_time()
             self._stats.last_error = None
         except Exception as exc:  # noqa: BLE001
             self._stats.last_error = str(exc)

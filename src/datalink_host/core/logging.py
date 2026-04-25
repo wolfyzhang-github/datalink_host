@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 import threading
 
+from datalink_host.core.clock import install_logging_clock
+
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(threadName)s] %(name)s: %(message)s"
 _LOG_BUFFER_SIZE = 2000
@@ -33,6 +35,7 @@ def _can_use_console_stream() -> bool:
 
 
 def configure_logging(log_path: Path | None = None) -> None:
+    install_logging_clock()
     memory_handler = InMemoryLogHandler()
     memory_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from time import monotonic, time
+from time import monotonic
 from typing import Any
 
 import numpy as np
+
+from datalink_host.core.clock import wall_time
 
 
 @dataclass(slots=True)
@@ -13,14 +15,14 @@ class TcpPacket:
     payload_bytes: int
     payload: bytes
     raw_bytes: bytes
-    received_at: float = field(default_factory=time)
+    received_at: float = field(default_factory=wall_time)
 
 
 @dataclass(slots=True)
 class ChannelFrame:
     sample_rate: float
     channels: np.ndarray
-    received_at: float = field(default_factory=time)
+    received_at: float = field(default_factory=wall_time)
     timestamp_us: int | None = None
     enqueued_at_monotonic: float = field(default_factory=monotonic)
 
@@ -41,8 +43,8 @@ class ProcessedFrame:
     data2: np.ndarray
     # Effective sample rate of data2 after downsampling, in Hz.
     data2_sample_rate: float
-    # Time when this frame finished ingest on the host, as a Unix timestamp in seconds.
-    received_at: float = field(default_factory=time)
+    # Time when this frame finished ingest, as a Unix timestamp in seconds.
+    received_at: float = field(default_factory=wall_time)
     # Authoritative frame start time in microseconds since Unix epoch.
     timestamp_us: int | None = None
 

@@ -1084,6 +1084,22 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(4096, dropped_bytes)
         self.assertTrue(conn.reset_called)
 
+    def test_runtime_wall_clock_uses_gnss_current_time_when_available(self) -> None:
+        runtime = RuntimeService(
+            AppSettings(gnss=GnssSettings(enabled=True, mode="deploy", port="tty.usbmodem"))
+        )
+        runtime._gnss_time.current_time_us = Mock(  # type: ignore[method-assign]
+            return_value=1_700_000_123_456_789
+        )
+
+        runtime._set_control_connected(True)
+        packet = TcpPacket(sample_rate=100.0, payload_bytes=0, payload=b"", raw_bytes=b"")
+        snapshot = runtime.snapshot()
+
+        self.assertAlmostEqual(1_700_000_123.456789, packet.received_at, places=6)
+        self.assertAlmostEqual(1_700_000_123.456789, snapshot.updated_at, places=6)
+        runtime._datalink.close()
+
     def test_runtime_uses_next_raw_gnss_timestamp_as_packet_end_time(self) -> None:
         runtime = RuntimeService(AppSettings())
         runtime._settings.gnss = GnssSettings(enabled=True, mode="deploy", port="tty.usbmodem")

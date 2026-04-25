@@ -28,6 +28,11 @@ class _StreamBuffer:
     next_segment_start: UTCDateTime | None = None
     buffer_start: UTCDateTime | None = None
     data: np.ndarray | None = None
+    anchor_timestamp_us: int | None = None
+    anchor_start: UTCDateTime | None = None
+    segments_appended: int = 0
+    samples_appended: int = 0
+    chunks_written: int = 0
 
 
 @dataclass(slots=True)
@@ -109,19 +114,33 @@ class MiniSeedWriter:
         if values.size == 0:
             return
         if timestamp_us is None:
-            LOGGER.warning("Skipping storage write because frame timestamp is unavailable")
+            LOGGER.warning(
+                "跳过 MiniSEED 存储：当前帧没有可用时间戳，无法确定文件名中的 UTC 起始时间。"
+                "原因=frame.timestamp_us is None"
+            )
             return
         if state.next_segment_start is None:
             state.next_segment_start = UTCDateTime(timestamp_us / 1_000_000.0)
+            state.anchor_timestamp_us = timestamp_us
+            state.anchor_start = state.next_segment_start
             LOGGER.info(
-                "Storage stream anchored: key=%s start_utc=%s sample_rate_hz=%.3f first_segment_samples=%s",
+                "存储时间锚点建立：该通道第一次收到可写样本，后续文件名时间会从这个锚点按采样率连续推进。"
+                "流=%s 时间来源=frame.timestamp_us 原始微秒时间戳(frame_timestamp_us)=%s "
+                "对应UTC(frame_timestamp_utc)=%s 转换公式=start_time=UTCDateTime(frame.timestamp_us / 1000000.0) "
+                "转换后的Unix秒(start_epoch_s)=%.6f 转换后的纳秒(start_ns)=%s "
+                "采样率(sample_rate_hz)=%.3f 首段样本数(first_segment_samples)=%s",
                 self._stream_label(key),
+                timestamp_us,
                 format_timestamp_iso_utc(timestamp_us),
+                timestamp_us / 1_000_000.0,
+                state.next_segment_start.ns,
                 state.sample_rate,
                 values.size,
             )
         segment_start = state.next_segment_start
         state.next_segment_start = segment_start + (values.size / state.sample_rate)
+        state.segments_appended += 1
+        state.samples_appended += int(values.size)
         if state.data is None or state.data.size == 0:
             state.data = values.copy()
             state.buffer_start = segment_start
@@ -141,7 +160,7 @@ class MiniSeedWriter:
         samples_per_file = max(int(round(state.sample_rate * settings.file_duration_seconds)), 1)
         while state.data is not None and state.data.size >= samples_per_file:
             chunk = state.data[:samples_per_file]
-            self._write_chunk(key, state.buffer_start, state.sample_rate, chunk, settings)
+            self._write_chunk(key, state.buffer_start, state.sample_rate, chunk, settings, state)
             state.data = state.data[samples_per_file:]
             state.buffer_start = state.buffer_start + (samples_per_file / state.sample_rate)
             if state.data.size == 0:
@@ -149,13 +168,15 @@ class MiniSeedWriter:
                 return
         if flush_all and state.data is not None and state.data.size > 0:
             LOGGER.info(
-                "Flushing residual MiniSEED buffer: key=%s pending_samples=%s sample_rate_hz=%.3f start_utc=%s",
+                "刷新残留 MiniSEED 缓冲：程序关闭或强制 flush 时，不足一个完整文件时长的样本也会写盘。"
+                "流=%s 待写样本数(pending_samples)=%s 采样率(sample_rate_hz)=%.3f "
+                "残留段起始UTC(start_utc)=%s",
                 self._stream_label(key),
                 state.data.size,
                 state.sample_rate,
                 format_timestamp_iso_utc(state.buffer_start.ns // 1000),
             )
-            self._write_chunk(key, state.buffer_start, state.sample_rate, state.data, settings)
+            self._write_chunk(key, state.buffer_start, state.sample_rate, state.data, settings, state)
             state.data = None
             state.buffer_start = None
 
@@ -166,11 +187,15 @@ class MiniSeedWriter:
         sample_rate: float,
         values: np.ndarray,
         settings: StorageSettings,
+        state: _StreamBuffer,
     ) -> None:
         group_name, channel_index = key
         output_dir = settings.root / f"{group_name.title()}-{channel_index + 1:02d}"
         output_dir.mkdir(parents=True, exist_ok=True)
         channel_code = settings.channel_codes[channel_index]
+        start_time_us = start_time.ns // 1000
+        start_seconds, start_micros = divmod(start_time_us, 1_000_000)
+        timestamp_millis = start_micros // 1000
         timestamp = self._format_timestamp(start_time)
         filename = self._build_filename(
             settings=settings,
@@ -196,11 +221,73 @@ class MiniSeedWriter:
             extension="log",
         )
         log_content = self._build_log_content(start_time=start_time, end_time=end_time)
+        anchor_offset_seconds = None
+        if state.anchor_start is not None:
+            anchor_offset_seconds = float(start_time - state.anchor_start)
+        LOGGER.info(
+            "MiniSEED 文件名拼接明细："
+            "步骤1=取当前待写chunk的起始时间start_time，它来自流缓冲buffer_start，首个buffer_start由frame.timestamp_us锚定，后续按样本数/采样率推进；"
+            "步骤2=把start_time转成UTC微秒并拆成秒和微秒；"
+            "步骤3=文件名时间字段只保留毫秒，timestamp_millis=timestamp_split_micros//1000，微秒尾数会被截断；"
+            "步骤4=按模板{network}.{station}.{timestamp}.R.{location}.{channel_code}.mseed拼出最终文件名。"
+            "流(stream)=%s 时间来源(source)=start_time_from_stream_buffer "
+            "数据组(group_name)=%s 通道下标0基(channel_index_zero_based)=%s 通道号1基(channel_index_one_based)=%s "
+            "存储根目录(root)=%s 目录拼接表达式(output_dir_expr)='%s / %s' 输出目录(output_dir)=%s "
+            "台网(network)=%s 台站(station)=%s 位置(location)=%s 通道码(channel_code)=%s "
+            "文件类型标记(file_type_marker)=%s 扩展名(extension)=mseed "
+            "chunk起始UTC(start_time_utc)=%s chunk起始纳秒(start_time_ns)=%s chunk起始微秒(start_time_us)=%s "
+            "UTC拆分后的秒(timestamp_split_seconds)=%s UTC拆分后的微秒(timestamp_split_micros)=%s "
+            "截断到毫秒(timestamp_millis)=%03d "
+            "时间字段公式(timestamp_expr)=strftime('%%Y%%m%%d%%H%%M%%S') + 三位毫秒 timestamp=%s "
+            "文件名模板(filename_expr)='{network}.{station}.{timestamp}.R.{location}.{channel_code}.mseed' "
+            "文件名(filename)=%s 完整路径(output_path)=%s "
+            "首帧锚点微秒(anchor_timestamp_us)=%s 首帧锚点UTC(anchor_timestamp_utc)=%s "
+            "当前chunk相对锚点偏移秒(anchor_offset_s)=%s 采样率(sample_rate_hz)=%.3f "
+            "chunk样本数(chunk_samples)=%s chunk时长秒(chunk_duration_s)=%.6f "
+            "配置单文件时长(file_duration_seconds)=%s 已追加段数(segments_appended)=%s "
+            "已追加样本数(samples_appended)=%s 写入前已落盘chunk数(chunks_written_before)=%s",
+            self._stream_label(key),
+            group_name,
+            channel_index,
+            channel_index + 1,
+            settings.root,
+            settings.root,
+            f"{group_name.title()}-{channel_index + 1:02d}",
+            output_dir,
+            settings.network,
+            settings.station,
+            settings.location,
+            channel_code,
+            STORAGE_FILE_TYPE_MARKER,
+            format_timestamp_iso_utc(start_time_us),
+            start_time.ns,
+            start_time_us,
+            start_seconds,
+            start_micros,
+            timestamp_millis,
+            timestamp,
+            filename,
+            output_path,
+            state.anchor_timestamp_us,
+            format_timestamp_iso_utc(state.anchor_timestamp_us),
+            "-" if anchor_offset_seconds is None else f"{anchor_offset_seconds:.6f}",
+            sample_rate,
+            encoded_values.size,
+            encoded_values.size / max(sample_rate, 1e-9),
+            settings.file_duration_seconds,
+            state.segments_appended,
+            state.samples_appended,
+            state.chunks_written,
+        )
         self._ensure_disk_space(settings.root, len(mseed_payload) + len(log_content.encode("utf-8")))
         output_path.write_bytes(mseed_payload)
+        state.chunks_written += 1
         LOGGER.info(
-            "Wrote MiniSEED file: path=%s stream=%s start_utc=%s end_utc=%s duration_s=%.3f "
-            "samples=%s sample_rate_hz=%.3f dtype=%s encoding=FLOAT32",
+            "MiniSEED 文件已落盘：写入完成后可用该完整路径定位文件；文件名中的timestamp就是上一步由start_utc截断到毫秒得到的值。"
+            "完整路径(path)=%s 流(stream)=%s 起始UTC(start_utc)=%s 结束UTC(end_utc)=%s "
+            "时长秒(duration_s)=%.3f 样本数(samples)=%s 采样率(sample_rate_hz)=%.3f "
+            "数据类型(dtype)=%s 编码(encoding)=FLOAT32 文件名(filename)=%s "
+            "文件名时间字段(timestamp)=%s 已落盘chunk数(chunks_written)=%s",
             output_path,
             self._stream_label(key),
             format_timestamp_iso_utc(start_time.ns // 1000),
@@ -209,6 +296,9 @@ class MiniSeedWriter:
             encoded_values.size,
             sample_rate,
             encoded_values.dtype,
+            filename,
+            timestamp,
+            state.chunks_written,
         )
         (output_dir / log_filename).write_text(log_content, encoding="utf-8")
 
