@@ -646,6 +646,12 @@ class RuntimeService:
         ports = self._gnss_time.available_ports()
         if not ports:
             return
+        if len(ports) > 1:
+            LOGGER.info(
+                "GNSS serial port was not auto-selected because multiple ports are available: ports=%s",
+                ", ".join(ports),
+            )
+            return
         selected_port = ports[0]
 
         with self._lock:
