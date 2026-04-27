@@ -1316,6 +1316,38 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(4096, dropped_bytes)
         self.assertTrue(conn.reset_called)
 
+    def test_gnss_service_detects_port_by_reading_timestamp(self) -> None:
+        class _FakeSerial:
+            def __init__(self, lines: list[bytes]) -> None:
+                self._lines = lines
+
+            def __enter__(self) -> "_FakeSerial":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def readline(self) -> bytes:
+                if not self._lines:
+                    return b""
+                return self._lines.pop(0)
+
+        opened_ports: list[str] = []
+
+        def open_serial(port: str, *args: object, **kwargs: object) -> _FakeSerial:
+            opened_ports.append(port)
+            if port == "COM1":
+                raise OSError("access denied")
+            return _FakeSerial([b"20260427084147000000\r\n"])
+
+        service = GnssTimeService(GnssSettings(enabled=True, mode="deploy", port=""))
+
+        with patch("datalink_host.services.gnss_time.serial.Serial", side_effect=open_serial):
+            selected_port = service.detect_port(["COM1", "COM8"])
+
+        self.assertEqual("COM8", selected_port)
+        self.assertEqual(["COM1", "COM8"], opened_ports)
+
     def test_runtime_wall_clock_uses_gnss_current_time_when_available(self) -> None:
         runtime = RuntimeService(
             AppSettings(gnss=GnssSettings(enabled=True, mode="deploy", port="tty.usbmodem"))
@@ -1401,6 +1433,21 @@ class ProtocolTests(unittest.TestCase):
 
         runtime._ensure_gnss_port_selected()
 
+        self.assertEqual("COM8", runtime.current_config()["gnss"]["port"])
+        self.assertEqual("COM8", runtime.snapshot().gnss_port)
+        runtime._datalink.close()
+
+    def test_runtime_autoselects_gnss_port_by_probing_multiple_ports(self) -> None:
+        runtime = RuntimeService(AppSettings(gnss=GnssSettings(enabled=True, port="")))
+        runtime._gnss_time.available_ports = Mock(  # type: ignore[method-assign]
+            return_value=["COM1", "COM8"]
+        )
+        runtime._gnss_time.detect_port = Mock(return_value="COM8")  # type: ignore[method-assign]
+        runtime._gnss_time.start = Mock()  # type: ignore[method-assign]
+
+        runtime._ensure_gnss_port_selected()
+
+        runtime._gnss_time.detect_port.assert_called_once_with(["COM1", "COM8"])
         self.assertEqual("COM8", runtime.current_config()["gnss"]["port"])
         self.assertEqual("COM8", runtime.snapshot().gnss_port)
         runtime._datalink.close()

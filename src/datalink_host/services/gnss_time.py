@@ -16,6 +16,8 @@ from datalink_host.core.config import GnssSettings
 
 LOGGER = logging.getLogger(__name__)
 GNSS_HOST_SKEW_WARNING_SECONDS = 2.0
+GNSS_PORT_PROBE_MIN_SECONDS = 0.25
+GNSS_PORT_PROBE_MAX_SECONDS = 2.0
 _DEBUG_PATTERN = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2}) (?P<fraction>\d{9})$"
 )
@@ -190,6 +192,19 @@ class GnssTimeService:
     def available_ports(self) -> list[str]:
         return [port.device for port in list_ports.comports()]
 
+    def detect_port(self, ports: list[str] | None = None) -> str | None:
+        settings = self._snapshot_settings()
+        if not settings.enabled:
+            return None
+        candidates = ports if ports is not None else self.available_ports()
+        for port in self._rank_port_candidates(candidates):
+            raw_value = self._probe_port_for_timestamp(port, settings)
+            if raw_value is None:
+                continue
+            LOGGER.info("Auto-detected GNSS serial port: port=%s sample=%r", port, raw_value)
+            return port
+        return None
+
     def _run(self) -> None:
         while not self._stop_event.is_set():
             settings = self._snapshot_settings()
@@ -260,6 +275,76 @@ class GnssTimeService:
     def _snapshot_settings(self) -> GnssSettings:
         with self._lock:
             return replace(self._settings)
+
+    def _rank_port_candidates(self, ports: list[str]) -> list[str]:
+        metadata = {port.device: port for port in list_ports.comports()}
+        unique_ports = list(dict.fromkeys(ports))
+        original_position = {port: index for index, port in enumerate(unique_ports)}
+
+        def score(port: str) -> tuple[int, int]:
+            info = metadata.get(port)
+            text = " ".join(
+                str(value or "")
+                for value in (
+                    port,
+                    getattr(info, "description", ""),
+                    getattr(info, "manufacturer", ""),
+                    getattr(info, "product", ""),
+                    getattr(info, "hwid", ""),
+                )
+            ).lower()
+            if any(token in text for token in ("gnss", "gps", "nmea", "u-blox", "ublox")):
+                return (0, original_position[port])
+            if "usb" in text:
+                return (1, original_position[port])
+            if "bluetooth" in text:
+                return (3, original_position[port])
+            return (2, original_position[port])
+
+        return sorted(unique_ports, key=score)
+
+    def _probe_port_for_timestamp(self, port: str, settings: GnssSettings) -> str | None:
+        timeout_seconds = min(
+            max(
+                settings.timestamp_interval_seconds
+                + settings.serial_timeout_seconds
+                + 0.25,
+                GNSS_PORT_PROBE_MIN_SECONDS,
+            ),
+            GNSS_PORT_PROBE_MAX_SECONDS,
+        )
+        serial_timeout_seconds = min(max(settings.serial_timeout_seconds, 0.05), 0.25)
+        deadline = time.monotonic() + timeout_seconds
+        next_poll_at = 0.0
+        try:
+            with serial.Serial(
+                port,
+                baudrate=settings.baudrate,
+                timeout=serial_timeout_seconds,
+                write_timeout=serial_timeout_seconds,
+            ) as conn:
+                while time.monotonic() < deadline:
+                    now = time.monotonic()
+                    if settings.mode == "debug" and now >= next_poll_at:
+                        conn.write((settings.command + "\r\n").encode("ascii"))
+                        conn.flush()
+                        next_poll_at = now + max(settings.poll_interval_seconds, 0.01)
+
+                    raw_line = conn.readline()
+                    if not raw_line:
+                        continue
+                    raw_value = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not raw_value:
+                        continue
+                    try:
+                        gnss_timestamp_to_us(raw_value, settings.mode)
+                    except ValueError:
+                        LOGGER.debug("GNSS serial probe ignored non-timestamp line: port=%s raw=%r", port, raw_value)
+                        continue
+                    return raw_value
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("GNSS serial probe failed: port=%s error=%s", port, exc)
+        return None
 
     def _set_connected(self, connected: bool) -> None:
         with self._lock:

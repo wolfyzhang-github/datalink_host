@@ -647,12 +647,16 @@ class RuntimeService:
         if not ports:
             return
         if len(ports) > 1:
-            LOGGER.info(
-                "GNSS serial port was not auto-selected because multiple ports are available: ports=%s",
-                ", ".join(ports),
-            )
-            return
-        selected_port = ports[0]
+            selected_port = self._gnss_time.detect_port(ports)
+            if selected_port is None:
+                LOGGER.info(
+                    "GNSS serial port was not auto-selected because no candidate returned a valid "
+                    "timestamp: ports=%s",
+                    ", ".join(ports),
+                )
+                return
+        else:
+            selected_port = ports[0]
 
         with self._lock:
             if not self._settings.gnss.enabled or self._settings.gnss.port.strip():
