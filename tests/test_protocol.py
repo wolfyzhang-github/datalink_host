@@ -572,6 +572,55 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(np.dtype("float32"), stream[0].data.dtype)
             self.assertEqual("FLOAT32", stream[0].stats.mseed.encoding)
 
+    def test_miniseed_writer_appends_one_second_chunks_to_configured_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            writer = MiniSeedWriter(
+                StorageSettings(enabled=True, root=Path(tmpdir), file_duration_seconds=10)
+            )
+
+            first_frame = ProcessedFrame(
+                sample_rate=100.0,
+                raw=np.zeros((1, 100), dtype=np.float64),
+                unwrapped=np.zeros((1, 100), dtype=np.float64),
+                data1=np.ones((1, 100), dtype=np.float64),
+                data1_sample_rate=100.0,
+                data2=np.zeros((1, 0), dtype=np.float64),
+                data2_sample_rate=10.0,
+                received_at=1_700_000_000.0,
+                timestamp_us=1_700_000_000_000_000,
+            )
+            second_frame = ProcessedFrame(
+                sample_rate=100.0,
+                raw=np.zeros((1, 100), dtype=np.float64),
+                unwrapped=np.zeros((1, 100), dtype=np.float64),
+                data1=np.full((1, 100), 2.0, dtype=np.float64),
+                data1_sample_rate=100.0,
+                data2=np.zeros((1, 0), dtype=np.float64),
+                data2_sample_rate=10.0,
+                received_at=1_700_000_001.0,
+                timestamp_us=1_700_000_001_000_000,
+            )
+
+            writer.write(first_frame)
+            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            self.assertEqual(1, len(data1_files))
+            first_size = data1_files[0].stat().st_size
+            first_stream = read(str(data1_files[0]))
+            self.assertEqual(100, sum(trace.stats.npts for trace in first_stream))
+
+            writer.write(second_frame)
+            writer.close()
+
+            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            self.assertEqual(1, len(data1_files))
+            self.assertGreater(data1_files[0].stat().st_size, first_size)
+            stream = read(str(data1_files[0]))
+            stream.sort(keys=["starttime"])
+            samples = np.concatenate([trace.data for trace in stream])
+            self.assertEqual(200, samples.size)
+            self.assertTrue(np.allclose(np.ones(100, dtype=np.float32), samples[:100]))
+            self.assertTrue(np.allclose(np.full(100, 2.0, dtype=np.float32), samples[100:]))
+
     def test_miniseed_writer_can_store_int32_with_gain(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             writer = MiniSeedWriter(
@@ -1328,7 +1377,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(used_fallback)
         self.assertIsNone(error)
         wait_timeout = runtime._gnss_time.wait_for_next_timestamp_us.call_args.args[0]
-        self.assertAlmostEqual(2.25, wait_timeout)
+        self.assertAlmostEqual(5.0, wait_timeout)
         runtime._datalink.close()
 
     def test_runtime_uses_host_time_when_initial_gnss_wait_times_out(self) -> None:
@@ -1365,6 +1414,52 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(used_fallback)
         self.assertIn("host received timestamp fallback", error or "")
         self.assertNotIn("no fallback timestamp is available", error or "")
+        wait_timeout = runtime._gnss_time.wait_for_next_timestamp_us.call_args.args[0]
+        self.assertAlmostEqual(5.0, wait_timeout)
+        runtime._datalink.close()
+
+    def test_runtime_uses_regular_gnss_wait_after_initial_grace_is_consumed(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gnss = GnssSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=1.0,
+            packet_timestamp_timeout_seconds=1.0,
+        )
+        runtime._gnss_time.wait_for_next_timestamp_us = Mock(return_value=None)  # type: ignore[method-assign]
+        runtime._gnss_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GnssStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=None,
+                last_error=None,
+            )
+        )
+
+        first_frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 1000), dtype=np.float32),
+            received_at=1_700_000_001.250,
+        )
+        timestamp_us, _, _ = runtime._resolve_frame_timestamp(first_frame)
+        runtime._last_frame_start_us = timestamp_us
+        runtime._last_frame_duration_us = 1_000_000
+        second_frame = ChannelFrame(
+            sample_rate=1000.0,
+            channels=np.zeros((1, 1000), dtype=np.float32),
+            received_at=1_700_000_002.250,
+        )
+        runtime._resolve_frame_timestamp(second_frame)
+
+        wait_timeouts = [
+            call.args[0] for call in runtime._gnss_time.wait_for_next_timestamp_us.call_args_list
+        ]
+        self.assertEqual([5.0, 1.0], wait_timeouts)
         runtime._datalink.close()
 
     def test_runtime_packet_timestamp_does_not_add_fractional_monotonic_elapsed_time(self) -> None:

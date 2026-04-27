@@ -58,6 +58,7 @@ BYTE_ORDERS = {"little", "big"}
 CHANNEL_LAYOUTS = {"interleaved", "channel-major"}
 GNSS_MODES = {"debug", "deploy"}
 INITIAL_GNSS_TIMESTAMP_WAIT_MARGIN_SECONDS = 0.25
+MIN_INITIAL_GNSS_TIMESTAMP_WAIT_SECONDS = 5.0
 
 
 class RuntimeService:
@@ -146,6 +147,7 @@ class RuntimeService:
         self._recent_packets: deque[dict[str, Any]] = deque(maxlen=MONITOR_PACKET_HISTORY_LIMIT)
         self._timestamp_resolution_count = 0
         self._last_timestamp_resolution_warning_key: tuple[str, str | None] | None = None
+        self._pending_initial_gnss_timestamp_wait = True
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -599,6 +601,7 @@ class RuntimeService:
                         "gnss.packet_timestamp_timeout_seconds",
                     )
                 self._gnss_time.update_settings(deepcopy(self._settings.gnss))
+                self._pending_initial_gnss_timestamp_wait = True
                 self._snapshot.gnss_enabled = self._settings.gnss.enabled
                 self._snapshot.gnss_mode = self._settings.gnss.mode
                 self._snapshot.gnss_port = self._settings.gnss.port
@@ -707,10 +710,7 @@ class RuntimeService:
             return timestamp_us, False, None
 
         gnss_status = self._gnss_time.status()
-        timeout_seconds = self._gnss_timestamp_wait_timeout(
-            gnss_status=gnss_status,
-            last_frame_start_us=last_frame_start_us,
-        )
+        timeout_seconds = self._gnss_timestamp_wait_timeout()
         gnss_packet_end_us = self._gnss_time.wait_for_next_timestamp_us(timeout_seconds)
         if gnss_packet_end_us is not None:
             timestamp_us = self._start_time_from_reference_timestamp(
@@ -780,23 +780,23 @@ class RuntimeService:
         )
         return timestamp_us, True, error
 
-    def _gnss_timestamp_wait_timeout(
-        self,
-        *,
-        gnss_status: Any,
-        last_frame_start_us: int | None,
-    ) -> float:
-        timeout_seconds = max(
-            self._settings.gnss.packet_timestamp_timeout_seconds,
-            self._settings.gnss.serial_timeout_seconds,
-        )
-        if last_frame_start_us is None and gnss_status.last_timestamp_us is None:
+    def _gnss_timestamp_wait_timeout(self) -> float:
+        with self._lock:
+            timeout_seconds = max(
+                self._settings.gnss.packet_timestamp_timeout_seconds,
+                self._settings.gnss.serial_timeout_seconds,
+            )
+            timestamp_interval_seconds = self._settings.gnss.timestamp_interval_seconds
+            use_initial_wait = self._pending_initial_gnss_timestamp_wait
+            if use_initial_wait:
+                self._pending_initial_gnss_timestamp_wait = False
+        if use_initial_wait:
             startup_timeout = (
-                self._settings.gnss.timestamp_interval_seconds
+                timestamp_interval_seconds
                 + timeout_seconds
                 + INITIAL_GNSS_TIMESTAMP_WAIT_MARGIN_SECONDS
             )
-            return max(timeout_seconds, startup_timeout)
+            return max(timeout_seconds, startup_timeout, MIN_INITIAL_GNSS_TIMESTAMP_WAIT_SECONDS)
         return timeout_seconds
 
     @staticmethod
@@ -954,6 +954,7 @@ class RuntimeService:
         with self._lock:
             self._snapshot.data_connected = connected
             if connected:
+                self._pending_initial_gnss_timestamp_wait = True
                 self._snapshot.latest_raw = None
                 self._snapshot.latest_unwrapped = None
                 self._snapshot.latest_data1 = None

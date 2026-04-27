@@ -21,12 +21,14 @@ dependencies = [
 [project.optional-dependencies]
 build = [
   "pyinstaller>=6.0",
+  "pywin32>=306; platform_system == 'Windows'",
 ]
 
 [project.scripts]
 datalink-host = "datalink_host.app:main"
 datalink-host-gui = "datalink_host.gui.app:main"
 datalink-host-runtime = "datalink_host.service_main:main"
+datalink-host-service = "datalink_host.windows_service:main"
 datalink-host-debug = "datalink_host.debug_launcher:main"
 datalink-host-sim-sender = "datalink_host.tools.sender_sim:main"
 datalink-host-sim-receiver = "datalink_host.tools.receiver_sim:main"

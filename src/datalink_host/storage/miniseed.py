@@ -22,6 +22,7 @@ LOGGER = logging.getLogger(__name__)
 STORAGE_FILE_TYPE_MARKER = "R"
 LOG_CHANNEL_CODE = "LOG"
 LOG_DIRECTORY_NAME = "log"
+STORAGE_FLUSH_INTERVAL_SECONDS = 1.0
 
 
 @dataclass(slots=True)
@@ -29,6 +30,8 @@ class _StreamBuffer:
     sample_rate: float
     next_segment_start: UTCDateTime | None = None
     buffer_start: UTCDateTime | None = None
+    file_start: UTCDateTime | None = None
+    samples_written_in_file: int = 0
     data: np.ndarray | None = None
 
 
@@ -120,6 +123,9 @@ class MiniSeedWriter:
             state.next_segment_start = UTCDateTime(timestamp_us / 1_000_000.0)
         segment_start = state.next_segment_start
         state.next_segment_start = segment_start + (values.size / state.sample_rate)
+        if state.file_start is None:
+            state.file_start = segment_start
+            state.samples_written_in_file = 0
         if state.data is None or state.data.size == 0:
             state.data = values.copy()
             state.buffer_start = segment_start
@@ -137,22 +143,43 @@ class MiniSeedWriter:
         if state.data is None or state.data.size == 0 or state.buffer_start is None:
             return
         samples_per_file = max(int(round(state.sample_rate * settings.file_duration_seconds)), 1)
-        while state.data is not None and state.data.size >= samples_per_file:
-            chunk = state.data[:samples_per_file]
-            self._write_chunk(key, state.buffer_start, state.sample_rate, chunk, settings)
-            state.data = state.data[samples_per_file:]
-            state.buffer_start = state.buffer_start + (samples_per_file / state.sample_rate)
+        samples_per_flush = max(int(round(state.sample_rate * STORAGE_FLUSH_INTERVAL_SECONDS)), 1)
+        while state.data is not None and state.data.size > 0:
+            if state.file_start is None:
+                state.file_start = state.buffer_start
+                state.samples_written_in_file = 0
+            if state.samples_written_in_file >= samples_per_file:
+                state.file_start = state.file_start + (samples_per_file / state.sample_rate)
+                state.samples_written_in_file = 0
+            samples_until_file_end = max(samples_per_file - state.samples_written_in_file, 1)
+            target_samples = min(samples_per_flush, samples_until_file_end)
+            if not flush_all and state.data.size < target_samples:
+                return
+            chunk_samples = min(state.data.size, target_samples)
+            chunk = state.data[:chunk_samples]
+            self._write_chunk(
+                key,
+                file_start_time=state.file_start,
+                start_time=state.buffer_start,
+                sample_rate=state.sample_rate,
+                values=chunk,
+                settings=settings,
+            )
+            state.data = state.data[chunk_samples:]
+            state.buffer_start = state.buffer_start + (chunk_samples / state.sample_rate)
+            state.samples_written_in_file += chunk_samples
+            if state.samples_written_in_file >= samples_per_file:
+                state.file_start = state.file_start + (samples_per_file / state.sample_rate)
+                state.samples_written_in_file = 0
             if state.data.size == 0:
                 state.data = None
                 return
-        if flush_all and state.data is not None and state.data.size > 0:
-            self._write_chunk(key, state.buffer_start, state.sample_rate, state.data, settings)
-            state.data = None
-            state.buffer_start = None
 
     def _write_chunk(
         self,
         key: tuple[str, int],
+        *,
+        file_start_time: UTCDateTime,
         start_time: UTCDateTime,
         sample_rate: float,
         values: np.ndarray,
@@ -162,7 +189,7 @@ class MiniSeedWriter:
         output_dir = settings.root / f"{group_name.title()}-{channel_index + 1:02d}"
         log_dir = settings.root / LOG_DIRECTORY_NAME
         channel_code = settings.channel_codes[channel_index]
-        timestamp = self._format_timestamp(start_time)
+        timestamp = self._format_timestamp(file_start_time)
         filename = self._build_filename(
             settings=settings,
             timestamp=timestamp,
@@ -190,11 +217,16 @@ class MiniSeedWriter:
             channel_code=LOG_CHANNEL_CODE,
             extension="log",
         )
-        log_content = self._build_log_content(start_time=start_time, end_time=end_time)
-        self._ensure_disk_space(settings.root, len(mseed_payload) + len(log_content.encode("utf-8")))
+        log_content = self._build_log_content(start_time=file_start_time, end_time=end_time)
+        self._ensure_disk_space(
+            settings.root,
+            len(mseed_payload) + len(log_content.encode("utf-8")),
+            protected_paths=[output_path],
+        )
         output_dir.mkdir(parents=True, exist_ok=True)
         log_dir.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(mseed_payload)
+        with output_path.open("ab") as handle:
+            handle.write(mseed_payload)
         (log_dir / log_filename).write_text(log_content, encoding="utf-8")
 
     @staticmethod
@@ -226,13 +258,23 @@ class MiniSeedWriter:
         )
         return header + ("\n".join(lines) if lines else "") + "\n"
 
-    def _ensure_disk_space(self, root: Path, required_bytes: int) -> None:
+    def _ensure_disk_space(
+        self,
+        root: Path,
+        required_bytes: int,
+        *,
+        protected_paths: list[Path] | None = None,
+    ) -> None:
         root.mkdir(parents=True, exist_ok=True)
+        protected = {
+            path.resolve(strict=False)
+            for path in (protected_paths or [])
+        }
         while True:
             usage = shutil.disk_usage(root)
             if usage.free >= required_bytes:
                 return
-            oldest_mseed = self._oldest_mseed_file(root)
+            oldest_mseed = self._oldest_mseed_file(root, protected)
             if oldest_mseed is None:
                 raise OSError(
                     f"Insufficient disk space for MiniSEED write: required_bytes={required_bytes}, "
@@ -240,8 +282,17 @@ class MiniSeedWriter:
                 )
             self._delete_stored_mseed(oldest_mseed, root)
 
-    def _oldest_mseed_file(self, root: Path) -> Path | None:
-        candidates = [path for path in root.rglob("*.mseed") if path.is_file()]
+    def _oldest_mseed_file(
+        self,
+        root: Path,
+        protected_paths: set[Path] | None = None,
+    ) -> Path | None:
+        protected = protected_paths or set()
+        candidates = [
+            path
+            for path in root.rglob("*.mseed")
+            if path.is_file() and path.resolve(strict=False) not in protected
+        ]
         if not candidates:
             return None
         return min(candidates, key=self._mseed_sort_key)
