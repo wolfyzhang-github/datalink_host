@@ -110,6 +110,9 @@ class GnssTimeService:
         with self._lock:
             should_run = self._settings.enabled and bool(self._settings.port.strip())
             if not should_run or self._thread is not None:
+                last_error = self._status.last_error
+                if self._settings.enabled and not self._settings.port.strip():
+                    last_error = "GNSS port is not configured"
                 self._status = replace(
                     self._status,
                     enabled=self._settings.enabled,
@@ -117,6 +120,7 @@ class GnssTimeService:
                     port=self._settings.port,
                     baudrate=self._settings.baudrate,
                     poll_interval_seconds=self._settings.poll_interval_seconds,
+                    last_error=last_error,
                     connected=False if not should_run else self._status.connected,
                 )
                 return

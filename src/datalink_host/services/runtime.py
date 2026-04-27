@@ -188,6 +188,7 @@ class RuntimeService:
         self._runtime_started = True
         self._stop_event.clear()
         self._cold_start_started_at_monotonic = time.monotonic()
+        self._ensure_gnss_port_selected()
         self._gnss_time.start()
         self._storage_sink.start()
         self._datalink_sink.start()
@@ -633,7 +634,29 @@ class RuntimeService:
             self._snapshot.updated_at = wall_time()
         if restart_data_server:
             self._restart_data_server()
+        self._ensure_gnss_port_selected()
         return self.current_config()
+
+    def _ensure_gnss_port_selected(self) -> None:
+        with self._lock:
+            should_select = self._settings.gnss.enabled and not self._settings.gnss.port.strip()
+        if not should_select:
+            return
+
+        ports = self._gnss_time.available_ports()
+        if not ports:
+            return
+        selected_port = ports[0]
+
+        with self._lock:
+            if not self._settings.gnss.enabled or self._settings.gnss.port.strip():
+                return
+            self._settings.gnss.port = selected_port
+            self._snapshot.gnss_port = selected_port
+            self._snapshot.updated_at = wall_time()
+            settings = deepcopy(self._settings.gnss)
+        self._gnss_time.update_settings(settings)
+        LOGGER.info("Auto-selected GNSS serial port: port=%s", selected_port)
 
     def _on_packet(self, packet: TcpPacket) -> None:
         if self._capture is not None:
@@ -696,7 +719,7 @@ class RuntimeService:
             if last_frame_start_us is None or last_frame_duration_us is None
             else last_frame_start_us + last_frame_duration_us
         )
-        if not self._settings.gnss.enabled or not self._settings.gnss.port.strip():
+        if not self._settings.gnss.enabled:
             timestamp_us = self._start_time_from_reference_timestamp(
                 reference_timestamp_us=int(round(frame.received_at * 1_000_000)),
                 frame_duration_us=frame_duration_us,
@@ -716,6 +739,28 @@ class RuntimeService:
                 gnss_skew_us=None,
             )
             return timestamp_us, False, None
+
+        if not self._settings.gnss.port.strip():
+            timestamp_us = self._start_time_from_reference_timestamp(
+                reference_timestamp_us=int(round(frame.received_at * 1_000_000)),
+                frame_duration_us=frame_duration_us,
+            )
+            error = "GNSS port is not configured; using host received timestamp fallback"
+            self._log_timestamp_resolution(
+                source="host_received_at_fallback",
+                assigned_timestamp_us=timestamp_us,
+                gnss_raw_timestamp_us=None,
+                gnss_now_timestamp_us=None,
+                last_frame_start_us=last_frame_start_us,
+                expected_next_us=expected_next_us,
+                frame_duration_us=frame_duration_us,
+                sample_rate=frame.sample_rate,
+                sample_count=sample_count,
+                used_fallback=True,
+                error=error,
+                gnss_skew_us=None,
+            )
+            return timestamp_us, True, error
 
         gnss_status = self._gnss_time.status()
         timeout_seconds = self._gnss_timestamp_wait_timeout()

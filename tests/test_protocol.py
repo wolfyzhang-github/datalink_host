@@ -1389,9 +1389,20 @@ class ProtocolTests(unittest.TestCase):
         timestamp_us, used_fallback, error = runtime._resolve_frame_timestamp(frame)
 
         self.assertEqual(1_700_000_000_250_000, timestamp_us)
-        self.assertFalse(used_fallback)
-        self.assertIsNone(error)
+        self.assertTrue(used_fallback)
+        self.assertIn("GNSS port is not configured", error or "")
         runtime._gnss_time.wait_for_next_timestamp_us.assert_not_called()
+        runtime._datalink.close()
+
+    def test_runtime_autoselects_gnss_port_when_enabled_without_configured_port(self) -> None:
+        runtime = RuntimeService(AppSettings(gnss=GnssSettings(enabled=True, port="")))
+        runtime._gnss_time.available_ports = Mock(return_value=["COM8"])  # type: ignore[method-assign]
+        runtime._gnss_time.start = Mock()  # type: ignore[method-assign]
+
+        runtime._ensure_gnss_port_selected()
+
+        self.assertEqual("COM8", runtime.current_config()["gnss"]["port"])
+        self.assertEqual("COM8", runtime.snapshot().gnss_port)
         runtime._datalink.close()
 
     def test_runtime_subtracts_frame_duration_from_packet_end_gnss_timestamp(self) -> None:

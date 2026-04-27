@@ -45,6 +45,7 @@ class PackagingSupportTests(unittest.TestCase):
                 self.assertEqual(expected_root / "var" / "captures" / "session.dlhcap", settings.capture.path)
                 self.assertEqual("127.0.0.1", settings.data_server.remote_host)
                 self.assertEqual(6340, settings.data_server.remote_port)
+                self.assertTrue(settings.storage.enabled)
                 self.assertTrue(settings.gnss.enabled)
                 self.assertEqual("deploy", settings.gnss.mode)
                 self.assertEqual(1.0, settings.gnss.packet_timestamp_timeout_seconds)

@@ -49,7 +49,7 @@ class ProcessingSettings:
 
 @dataclass(slots=True)
 class StorageSettings:
-    enabled: bool = False
+    enabled: bool = True
     root: Path = Path(r"E:\data")
     file_duration_seconds: int = 60
     output_data_type: str = "float32"
