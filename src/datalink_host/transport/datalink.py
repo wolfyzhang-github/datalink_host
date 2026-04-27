@@ -59,12 +59,20 @@ class DataLinkStats:
     last_send_at: float | None = None
 
 
+@dataclass(slots=True)
+class _StreamTimeline:
+    sample_rate: float
+    next_start_time: float | None = None
+
+
 class DataLinkPublisher:
     def __init__(self, settings: DataLinkSettings, storage_settings: StorageSettings) -> None:
         self._settings = deepcopy(settings)
         self._storage_settings = deepcopy(storage_settings)
         self._socket: socket.socket | None = None
         self._lock = threading.Lock()
+        self._timeline_lock = threading.Lock()
+        self._timelines: dict[tuple[str, int], _StreamTimeline] = {}
         self._mseed_sequence_lock = threading.Lock()
         self._next_mseed_sequence_number = 1
         self._stats = DataLinkStats()
@@ -196,10 +204,15 @@ class DataLinkPublisher:
         values = np.asarray(values)
         if values.size == 0:
             return []
-        if timestamp_us is None:
-            LOGGER.warning("Skipping DataLink publish because frame timestamp is unavailable")
+        start_time = self._stream_start_time(
+            group_name=group_name,
+            channel_index=channel_index,
+            values_size=values.size,
+            sample_rate=sample_rate,
+            timestamp_us=timestamp_us,
+        )
+        if start_time is None:
             return []
-        start_time = timestamp_us / 1_000_000.0
         packets = self._encode_miniseed_packets(
             channel_index=channel_index,
             values=values,
@@ -209,6 +222,30 @@ class DataLinkPublisher:
             max_payload_bytes=max_payload_bytes,
         )
         return [(payload, stream_id, packet_start, packet_end) for payload, packet_start, packet_end in packets]
+
+    def _stream_start_time(
+        self,
+        *,
+        group_name: str,
+        channel_index: int,
+        values_size: int,
+        sample_rate: float,
+        timestamp_us: int | None,
+    ) -> float | None:
+        if timestamp_us is None:
+            LOGGER.warning("Skipping DataLink publish because frame timestamp is unavailable")
+            return None
+        key = (group_name, channel_index)
+        with self._timeline_lock:
+            state = self._timelines.get(key)
+            if state is None or not np.isclose(state.sample_rate, sample_rate):
+                state = _StreamTimeline(sample_rate=sample_rate)
+                self._timelines[key] = state
+            if state.next_start_time is None:
+                state.next_start_time = timestamp_us / 1_000_000.0
+            start_time = state.next_start_time
+            state.next_start_time = start_time + (values_size / max(sample_rate, 1e-9))
+            return start_time
 
     def _encode_miniseed_record(
         self,

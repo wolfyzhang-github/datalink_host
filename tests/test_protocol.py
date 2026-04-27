@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 from fastapi.testclient import TestClient
-from obspy import read
+from obspy import Stream, read
 
 from datalink_host.core.config import (
     AppSettings,
@@ -951,6 +951,126 @@ class ProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(1_700_000_000.0, start_time, places=6)
         self.assertAlmostEqual(1_700_000_001.0, end_time, places=6)
         publisher.close()
+
+    def test_datalink_uses_continuous_timeline_after_first_timestamp(self) -> None:
+        publisher = DataLinkPublisher(
+            DataLinkSettings(),
+            StorageSettings(),
+        )
+
+        first_packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(100, dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_000_000_000,
+        )
+        second_packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+            group_name="data1",
+            channel_index=0,
+            values=np.ones(100, dtype=np.float64),
+            sample_rate=100.0,
+            timestamp_us=1_700_000_001_123_456,
+        )
+
+        self.assertAlmostEqual(1_700_000_000.0, first_packets[0][2], places=6)
+        self.assertAlmostEqual(1_700_000_001.0, second_packets[0][2], places=6)
+        stream = read(io.BytesIO(second_packets[0][0]), format="MSEED")
+        self.assertAlmostEqual(1_700_000_001.0, float(stream[0].stats.starttime.timestamp), places=6)
+        publisher.close()
+
+    def test_storage_and_datalink_payloads_have_matching_times_and_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_settings = StorageSettings(
+                enabled=True,
+                root=Path(tmpdir),
+                file_duration_seconds=10,
+            )
+            writer = MiniSeedWriter(storage_settings)
+            publisher = DataLinkPublisher(
+                DataLinkSettings(send_data2=True),
+                storage_settings,
+            )
+            datalink_payloads: dict[tuple[str, int], list[bytes]] = {}
+
+            for frame_index, timestamp_us in enumerate(
+                (1_700_000_000_000_000, 1_700_000_001_123_456)
+            ):
+                data1 = np.vstack(
+                    [
+                        np.arange(100, dtype=np.float64) + channel_index * 1_000 + frame_index * 100
+                        for channel_index in range(8)
+                    ]
+                )
+                data2 = np.vstack(
+                    [
+                        np.arange(10, dtype=np.float64) + channel_index * 100 + frame_index * 10
+                        for channel_index in range(8)
+                    ]
+                )
+                frame = ProcessedFrame(
+                    sample_rate=100.0,
+                    raw=np.zeros((8, 100), dtype=np.float64),
+                    unwrapped=np.zeros((8, 100), dtype=np.float64),
+                    data1=data1,
+                    data1_sample_rate=100.0,
+                    data2=data2,
+                    data2_sample_rate=10.0,
+                    received_at=1_700_000_000.0 + frame_index,
+                    timestamp_us=timestamp_us,
+                )
+
+                writer.write(frame)
+                for group_name, channels, sample_rate in (
+                    ("data1", data1, 100.0),
+                    ("data2", data2, 10.0),
+                ):
+                    for channel_index in range(6):
+                        packets = publisher._serialize_channel_packets(  # type: ignore[attr-defined]
+                            group_name=group_name,
+                            channel_index=channel_index,
+                            values=channels[channel_index],
+                            sample_rate=sample_rate,
+                            timestamp_us=timestamp_us,
+                        )
+                        datalink_payloads.setdefault((group_name, channel_index), []).extend(
+                            payload for payload, *_ in packets
+                        )
+
+            writer.close()
+
+            for group_name, sample_rate in (("data1", 100.0), ("data2", 10.0)):
+                for channel_index in range(6):
+                    storage_path = (
+                        Path(tmpdir) / f"{group_name.title()}-{channel_index + 1:02d}"
+                    )
+                    storage_files = sorted(storage_path.glob("*.mseed"))
+                    self.assertEqual(1, len(storage_files))
+                    storage_stream = read(str(storage_files[0]))
+                    datalink_stream = Stream()
+                    for payload in datalink_payloads[(group_name, channel_index)]:
+                        datalink_stream += read(io.BytesIO(payload), format="MSEED")
+
+                    storage_stream.sort(keys=["starttime"])
+                    datalink_stream.sort(keys=["starttime"])
+                    storage_stream.merge(method=1)
+                    datalink_stream.merge(method=1)
+                    self.assertEqual(1, len(storage_stream))
+                    self.assertEqual(1, len(datalink_stream))
+                    stored_trace = storage_stream[0]
+                    sent_trace = datalink_stream[0]
+                    self.assertEqual(stored_trace.id, sent_trace.id)
+                    self.assertAlmostEqual(sample_rate, stored_trace.stats.sampling_rate, places=6)
+                    self.assertAlmostEqual(sample_rate, sent_trace.stats.sampling_rate, places=6)
+                    self.assertAlmostEqual(
+                        float(stored_trace.stats.starttime.timestamp),
+                        float(sent_trace.stats.starttime.timestamp),
+                        places=6,
+                    )
+                    self.assertEqual(stored_trace.stats.npts, sent_trace.stats.npts)
+                    self.assertEqual(stored_trace.stats.mseed.encoding, sent_trace.stats.mseed.encoding)
+                    self.assertTrue(np.array_equal(stored_trace.data, sent_trace.data))
+            publisher.close()
 
     def test_datalink_publish_uses_background_sender(self) -> None:
         publisher = DataLinkPublisher(

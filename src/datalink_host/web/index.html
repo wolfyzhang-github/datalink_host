@@ -1051,7 +1051,7 @@
       els.channelLayout.value = protocol.channel_layout || "interleaved";
       els.storageEnabled.checked = Boolean(storage.enabled);
       els.storageRoot.value = storage.root || "";
-      els.storageDuration.value = storage.file_duration_seconds ?? 3600;
+      els.storageDuration.value = storage.file_duration_seconds ?? 60;
       els.outputDataType.value = String(storage.output_data_type || "float32").toLowerCase();
       els.int32Gain.value = storage.int32_gain ?? 1000000;
       els.storageNetwork.value = storage.network || "SC";
