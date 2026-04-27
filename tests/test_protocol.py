@@ -1497,7 +1497,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(used_fallback)
         self.assertIsNone(error)
         wait_timeout = runtime._gnss_time.wait_for_next_timestamp_us.call_args.args[0]
-        self.assertAlmostEqual(5.0, wait_timeout)
+        self.assertAlmostEqual(90.0, wait_timeout, places=1)
         runtime._datalink.close()
 
     def test_runtime_uses_host_time_when_initial_gnss_wait_times_out(self) -> None:
@@ -1535,7 +1535,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertIn("host received timestamp fallback", error or "")
         self.assertNotIn("no fallback timestamp is available", error or "")
         wait_timeout = runtime._gnss_time.wait_for_next_timestamp_us.call_args.args[0]
-        self.assertAlmostEqual(5.0, wait_timeout)
+        self.assertAlmostEqual(90.0, wait_timeout, places=1)
         runtime._datalink.close()
 
     def test_runtime_uses_regular_gnss_wait_after_initial_grace_is_consumed(self) -> None:
@@ -1579,7 +1579,26 @@ class ProtocolTests(unittest.TestCase):
         wait_timeouts = [
             call.args[0] for call in runtime._gnss_time.wait_for_next_timestamp_us.call_args_list
         ]
-        self.assertEqual([5.0, 1.0], wait_timeouts)
+        self.assertAlmostEqual(90.0, wait_timeouts[0], places=1)
+        self.assertEqual(1.0, wait_timeouts[1])
+        runtime._datalink.close()
+
+    def test_runtime_initial_gnss_wait_uses_remaining_cold_start_buffer(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._settings.gnss = GnssSettings(
+            enabled=True,
+            mode="deploy",
+            port="tty.usbmodem",
+            timestamp_interval_seconds=1.0,
+            packet_timestamp_timeout_seconds=1.0,
+            serial_timeout_seconds=0.1,
+        )
+        runtime._cold_start_started_at_monotonic = 100.0
+
+        with patch("datalink_host.services.runtime.time.monotonic", return_value=180.0):
+            timeout_seconds = runtime._gnss_timestamp_wait_timeout()
+
+        self.assertAlmostEqual(10.0, timeout_seconds)
         runtime._datalink.close()
 
     def test_runtime_packet_timestamp_does_not_add_fractional_monotonic_elapsed_time(self) -> None:

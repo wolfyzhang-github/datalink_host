@@ -58,7 +58,13 @@ BYTE_ORDERS = {"little", "big"}
 CHANNEL_LAYOUTS = {"interleaved", "channel-major"}
 GNSS_MODES = {"debug", "deploy"}
 INITIAL_GNSS_TIMESTAMP_WAIT_MARGIN_SECONDS = 0.25
-MIN_INITIAL_GNSS_TIMESTAMP_WAIT_SECONDS = 5.0
+COLD_START_GNSS_READY_SECONDS = 40.0
+COLD_START_TCP_READY_SECONDS = 80.0
+COLD_START_INITIALIZATION_BUFFER_SECONDS = 10.0
+COLD_START_INITIAL_GNSS_WAIT_SECONDS = (
+    max(COLD_START_GNSS_READY_SECONDS, COLD_START_TCP_READY_SECONDS)
+    + COLD_START_INITIALIZATION_BUFFER_SECONDS
+)
 
 
 class RuntimeService:
@@ -148,6 +154,7 @@ class RuntimeService:
         self._timestamp_resolution_count = 0
         self._last_timestamp_resolution_warning_key: tuple[str, str | None] | None = None
         self._pending_initial_gnss_timestamp_wait = True
+        self._cold_start_started_at_monotonic = time.monotonic()
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -180,6 +187,7 @@ class RuntimeService:
             return
         self._runtime_started = True
         self._stop_event.clear()
+        self._cold_start_started_at_monotonic = time.monotonic()
         self._gnss_time.start()
         self._storage_sink.start()
         self._datalink_sink.start()
@@ -788,6 +796,7 @@ class RuntimeService:
             )
             timestamp_interval_seconds = self._settings.gnss.timestamp_interval_seconds
             use_initial_wait = self._pending_initial_gnss_timestamp_wait
+            cold_start_started_at = self._cold_start_started_at_monotonic
             if use_initial_wait:
                 self._pending_initial_gnss_timestamp_wait = False
         if use_initial_wait:
@@ -796,7 +805,12 @@ class RuntimeService:
                 + timeout_seconds
                 + INITIAL_GNSS_TIMESTAMP_WAIT_MARGIN_SECONDS
             )
-            return max(timeout_seconds, startup_timeout, MIN_INITIAL_GNSS_TIMESTAMP_WAIT_SECONDS)
+            cold_start_remaining = max(
+                COLD_START_INITIAL_GNSS_WAIT_SECONDS
+                - (time.monotonic() - cold_start_started_at),
+                0.0,
+            )
+            return max(timeout_seconds, startup_timeout, cold_start_remaining)
         return timeout_seconds
 
     @staticmethod
