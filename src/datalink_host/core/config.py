@@ -72,7 +72,7 @@ class StorageSettings:
 @dataclass(slots=True)
 class DataLinkSettings:
     enabled: bool = True
-    host: str = "10.2.16.61"
+    host: str = "10.2.12.61"
     port: int = 16000
     stream_id_template: str = "{network}_{station}_{location}_{channel}/MSEED"
     ack_required: bool = True

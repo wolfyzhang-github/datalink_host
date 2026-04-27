@@ -1243,7 +1243,7 @@ class MainWindow(QtWidgets.QMainWindow):
             },
             "datalink": {
                 "enabled": self._datalink_enabled_checkbox.isChecked(),
-                "host": self._datalink_host_edit.text().strip() or "10.2.16.61",
+                "host": self._datalink_host_edit.text().strip() or "10.2.12.61",
                 "port": self._datalink_port_spin.value(),
                 "stream_id_template": self._datalink_stream_template_edit.text().strip()
                 or "{network}_{station}_{location}_{channel}/MSEED",

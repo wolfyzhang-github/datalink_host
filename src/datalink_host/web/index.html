@@ -541,7 +541,7 @@
                     <div class="row g-3" id="datalink-fields">
                       <div class="col-md-6">
                         <label class="form-label" for="datalink-host">远传主机</label>
-                        <input id="datalink-host" class="form-control" type="text" placeholder="10.2.16.61">
+                        <input id="datalink-host" class="form-control" type="text" placeholder="10.2.12.61">
                       </div>
                       <div class="col-md-6">
                         <label class="form-label" for="datalink-port">远传端口</label>
@@ -1140,7 +1140,7 @@
         },
         datalink: {
           enabled: els.datalinkEnabled.checked,
-          host: els.datalinkHost.value.trim() || "10.2.16.61",
+          host: els.datalinkHost.value.trim() || "10.2.12.61",
           port: readNumber(els.datalinkPort, "远传端口"),
           stream_id_template: els.datalinkStreamTemplate.value.trim() || "{network}_{station}_{location}_{channel}/MSEED",
           ack_required: els.ackRequired.checked,

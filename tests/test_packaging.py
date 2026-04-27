@@ -50,7 +50,7 @@ class PackagingSupportTests(unittest.TestCase):
                 self.assertEqual("deploy", settings.gnss.mode)
                 self.assertEqual(1.0, settings.gnss.packet_timestamp_timeout_seconds)
                 self.assertTrue(settings.datalink.enabled)
-                self.assertEqual("10.2.16.61", settings.datalink.host)
+                self.assertEqual("10.2.12.61", settings.datalink.host)
                 self.assertEqual("float32", settings.storage.output_data_type)
                 self.assertEqual(1_000_000.0, settings.storage.int32_gain)
 

@@ -139,7 +139,7 @@ printf '%s\n' '{"type":"set_config","payload":{"storage":{"enabled":true,"root":
 更新 DataLink 配置：
 
 ```bash
-printf '%s\n' '{"type":"set_config","payload":{"datalink":{"enabled":true,"host":"10.2.16.61","port":16000,"ack_required":true,"send_data2":false}}}' | nc 127.0.0.1 19001
+printf '%s\n' '{"type":"set_config","payload":{"datalink":{"enabled":true,"host":"10.2.12.61","port":16000,"ack_required":true,"send_data2":false}}}' | nc 127.0.0.1 19001
 ```
 
 启用原始 TCP 抓包：
