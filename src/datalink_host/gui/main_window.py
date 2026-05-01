@@ -15,6 +15,30 @@ from datalink_host.services.runtime import RuntimeService, downsample_for_plot, 
 PROCESSING_QUEUE_CAPACITY = 32
 STORAGE_QUEUE_CAPACITY = 16
 DATALINK_QUEUE_CAPACITY = 16
+DISPLAY_CHANNEL_COUNT = 6
+FTP_HOST = "10.2.16.214"
+FTP_PORT = 21
+FTP_USERNAME = "Semi"
+FTP_CONNECTION_TEXT = "\n".join(
+    [
+        f"IP: {FTP_HOST}",
+        f"端口: {FTP_PORT}",
+        f"用户名: {FTP_USERNAME}",
+        "密码: 空",
+    ]
+)
+FTP_DOWNLOAD_GUIDE = "\n".join(
+    [
+        "数据下载说明文档",
+        "",
+        "1. 打开随设备提供的 FileZilla 软件。",
+        f"2. 在主机中输入 {FTP_HOST}，端口输入 {FTP_PORT}。",
+        f"3. 用户名输入 {FTP_USERNAME}，密码保持为空。",
+        "4. 点击快速连接，进入设备数据目录。",
+        "5. 选择需要下载的数据文件，拖拽到本地目录即可。",
+        "6. 下载完成后断开 FTP 连接。",
+    ]
+)
 
 
 def recommended_window_size(available_width: int, available_height: int) -> tuple[int, int]:
@@ -42,12 +66,20 @@ class IndicatorLamp(QtWidgets.QFrame):
         self.setFixedSize(diameter, diameter)
         self.set_active(False)
 
-    def set_active(self, active: bool) -> None:
-        background = "#a8d37a" if active else "#d6dde8"
-        border = "#2c4f87" if active else "#7f8fab"
+    def set_state(self, state: str) -> None:
+        palette = {
+            "ok": ("#8fcf6d", "#2d6b2f"),
+            "warning": ("#f1c14f", "#8a6300"),
+            "error": ("#e46d6d", "#8f1f1f"),
+            "idle": ("#d6dde8", "#7f8fab"),
+        }
+        background, border = palette.get(state, palette["idle"])
         self.setStyleSheet(
             f"background:{background}; border:2px solid {border}; border-radius:{self._diameter // 2}px;"
         )
+
+    def set_active(self, active: bool) -> None:
+        self.set_state("ok" if active else "idle")
 
 
 class EmblemWidget(QtWidgets.QWidget):
@@ -100,6 +132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._status_labels: dict[str, list[QtWidgets.QLabel]] = {}
         self._status_lamps: dict[str, list[IndicatorLamp]] = {}
         self._plots: list[pg.PlotDataItem | None] = [None] * self._settings.protocol.channels
+        self._plot_widgets: list[pg.PlotWidget | None] = [None] * self._settings.protocol.channels
         self._queue_bars: dict[str, QtWidgets.QProgressBar] = {}
         self._queue_value_labels: dict[str, QtWidgets.QLabel] = {}
         self._mode_selectors: list[QtWidgets.QComboBox] = []
@@ -192,13 +225,15 @@ class MainWindow(QtWidgets.QMainWindow):
         shell_layout.setContentsMargins(18, 18, 18, 18)
         shell_layout.setSpacing(16)
         shell_layout.addWidget(self._build_header_banner())
+        shell_layout.addWidget(self._build_control_strip())
 
         tabs = QtWidgets.QTabWidget(shell)
         tabs.setDocumentMode(True)
-        tabs.addTab(self._build_settings_tab(), "参数设置")
+        tabs.addTab(self._build_device_status_tab(), "设备基本状态")
+        tabs.addTab(self._build_device_settings_tab(), "设备参数设置")
         tabs.addTab(self._build_waveform_tab(), "波形显示")
-        tabs.addTab(self._build_status_tab(), "状态监控")
-        tabs.addTab(self._build_remote_tab(), "远程传输")
+        tabs.addTab(self._build_download_tab(), "数据下载")
+        tabs.addTab(self._build_debug_tab(), "其他调试功能")
         shell_layout.addWidget(tabs, stretch=1)
 
         outer.addWidget(shell)
@@ -221,7 +256,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(EmblemWidget(banner), stretch=0, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
         return banner
 
-    def _build_settings_tab(self) -> QtWidgets.QWidget:
+    def _build_device_status_tab(self) -> QtWidgets.QWidget:
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
@@ -230,7 +265,204 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(container)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(self._build_control_strip())
+        layout.addWidget(
+            self._build_page_intro(
+                "设备基本状态",
+                "显示设备运行、数据传输、远传、GNSS 和硬盘容量的关键状态。",
+            )
+        )
+
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(16)
+        cards = [
+            self._build_status_card(
+                "数据传输情况",
+                "data_connected",
+                "source_sample_rate",
+                "当前采样率",
+                [
+                    ("processing_active", "接收状态"),
+                    ("data_connected", "设备连接"),
+                ],
+            ),
+            self._build_status_card(
+                "远程传输连接",
+                "datalink_connected",
+                "datalink_connected",
+                "连接状态",
+                [
+                    ("datalink_packets_sent", "远传数量"),
+                    ("datalink_reconnects", "重连次数"),
+                ],
+            ),
+            self._build_status_card(
+                "传输数量",
+                "data_connected",
+                "packets_received",
+                "接收包数",
+                [
+                    ("bytes_received", "接收字节"),
+                    ("datalink_bytes_sent", "远传字节"),
+                ],
+            ),
+            self._build_status_card(
+                "卫星状态",
+                "gnss_connected",
+                "satellite_status",
+                "GNSS 状态",
+                [
+                    ("gnss_connected", "授时连接"),
+                    ("gnss_fallback_active", "回退状态"),
+                ],
+            ),
+            self._build_status_card(
+                "GNSS 时间",
+                "gnss_connected",
+                "gnss_last_timestamp",
+                "当前时间",
+                [
+                    ("gnss_enabled", "GNSS 开关"),
+                    ("gnss_port", "GNSS 端口"),
+                ],
+            ),
+            self._build_status_card(
+                "硬盘剩余容量",
+                "storage_enabled",
+                "storage_disk_free_bytes",
+                "可用容量",
+                [
+                    ("storage_disk_usage_percent", "磁盘占用"),
+                    ("storage_enabled", "存储状态"),
+                ],
+            ),
+        ]
+        for index, card in enumerate(cards):
+            grid.addWidget(card, index // 2, index % 2)
+        for column in range(2):
+            grid.setColumnStretch(column, 1)
+        layout.addLayout(grid)
+        layout.addStretch(1)
+
+        scroll.setWidget(container)
+        return scroll
+
+    def _build_device_settings_tab(self) -> QtWidgets.QWidget:
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        container = QtWidgets.QWidget(scroll)
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(16)
+        layout.addWidget(
+            self._build_page_intro(
+                "设备参数设置",
+                "仅保留常用工作参数，其他高级项集中在“其他调试功能”。",
+            )
+        )
+
+        card = self._panel_card("常用参数", container)
+        card_layout = QtWidgets.QFormLayout(card)
+        card_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+
+        self._data1_rate_spin = QtWidgets.QDoubleSpinBox(card)
+        self._data1_rate_spin.setRange(0.1, 10000.0)
+        self._data1_rate_spin.setDecimals(2)
+        self._data1_rate_spin.setSuffix(" Hz")
+
+        self._storage_station_edit = QtWidgets.QLineEdit(card)
+        self._storage_station_edit.setPlaceholderText("输入保存文件名")
+        self._storage_station_edit.setToolTip("该名称会作为数据文件名中的主要标识。")
+
+        card_layout.addRow("采样率", self._data1_rate_spin)
+        card_layout.addRow("文件名", self._storage_station_edit)
+        layout.addWidget(card)
+        layout.addStretch(1)
+
+        scroll.setWidget(container)
+        return scroll
+
+    def _build_download_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget(self)
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(16)
+        layout.addWidget(
+            self._build_page_intro(
+                "数据下载",
+                "使用 FTP 下载设备数据，推荐使用随设备提供的 FileZilla 软件。",
+            )
+        )
+
+        workspace = QtWidgets.QFrame(widget)
+        workspace.setObjectName("workspace")
+        workspace_layout = QtWidgets.QHBoxLayout(workspace)
+        workspace_layout.setContentsMargins(18, 18, 18, 18)
+        workspace_layout.setSpacing(18)
+
+        info_card = self._panel_card("FTP 连接信息", workspace)
+        info_layout = QtWidgets.QVBoxLayout(info_card)
+        form = QtWidgets.QFormLayout()
+        form.addRow("IP", self._static_value_label(FTP_HOST, info_card))
+        form.addRow("端口", self._static_value_label(str(FTP_PORT), info_card))
+        form.addRow("用户名", self._static_value_label(FTP_USERNAME, info_card))
+        form.addRow("密码", self._static_value_label("空", info_card))
+        info_layout.addLayout(form)
+        copy_button = QtWidgets.QPushButton("复制连接信息", info_card)
+        copy_button.clicked.connect(self._copy_ftp_info)
+        info_layout.addWidget(copy_button, alignment=QtCore.Qt.AlignmentFlag.AlignLeft)
+        info_layout.addStretch(1)
+        workspace_layout.addWidget(info_card, stretch=2)
+
+        guide_card = self._panel_card("下载说明文档", workspace)
+        guide_layout = QtWidgets.QVBoxLayout(guide_card)
+        guide = QtWidgets.QPlainTextEdit(guide_card)
+        guide.setReadOnly(True)
+        guide.setPlainText(FTP_DOWNLOAD_GUIDE)
+        guide.setObjectName("downloadGuide")
+        guide_layout.addWidget(guide)
+        workspace_layout.addWidget(guide_card, stretch=3)
+
+        layout.addWidget(workspace, stretch=1)
+        return widget
+
+    def _build_debug_tab(self) -> QtWidgets.QWidget:
+        widget = QtWidgets.QWidget(self)
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(16)
+        layout.addWidget(
+            self._build_page_intro(
+                "其他调试功能",
+                "高级配置、队列、日志和远程接口集中在这里，便于维护和现场调试。",
+            )
+        )
+
+        tabs = QtWidgets.QTabWidget(widget)
+        tabs.setDocumentMode(True)
+        tabs.addTab(self._build_advanced_settings_tab(), "高级配置")
+        tabs.addTab(self._build_status_tab(), "队列与日志")
+        tabs.addTab(self._build_remote_tab(), "远传接口")
+        layout.addWidget(tabs, stretch=1)
+        return widget
+
+    def _build_advanced_settings_tab(self) -> QtWidgets.QWidget:
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+
+        container = QtWidgets.QWidget(scroll)
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(16)
+        layout.addWidget(
+            self._build_page_intro(
+                "高级配置",
+                "协议、存储、远传和 GNSS 相关的技术参数集中在这里。",
+            )
+        )
 
         content = QtWidgets.QHBoxLayout()
         content.setSpacing(16)
@@ -251,7 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(
             self._build_page_intro(
                 "波形显示",
-                "按参考布局展示 8 路通道波形，支持在原始、降采样1、降采样2之间切换。",
+                "支持 CH1 至 CH6 的多通道波形显示，可在不同数据源之间切换。",
             )
         )
 
@@ -267,6 +499,7 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar.addSpacing(18)
         toolbar.addWidget(QtWidgets.QLabel("显示时长", workspace))
         toolbar.addWidget(self._create_plot_window_seconds_spin(workspace))
+        toolbar.addWidget(self._create_waveform_reset_button(workspace))
         toolbar.addStretch(1)
         toolbar.addWidget(QtWidgets.QLabel("当前源采样率", workspace))
         toolbar.addWidget(self._create_snapshot_label("source_sample_rate", workspace))
@@ -275,29 +508,13 @@ class MainWindow(QtWidgets.QMainWindow):
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(16)
-        mapping = [
-            ("地表应变", 0, "钻孔#1", 2),
-            ("深井应变", 1, "钻孔#2", 3),
-            ("地表温度", 6, "钻孔#3", 4),
-            ("深井温度", 7, "钻孔#4", 5),
-        ]
-        for row, (left_label, left_channel, center_label, right_channel) in enumerate(mapping):
-            left_text = QtWidgets.QLabel(left_label, workspace)
-            left_text.setObjectName("laneLabel")
-            left_text.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            grid.addWidget(left_text, row, 0)
+        for index in range(DISPLAY_CHANNEL_COUNT):
+            row = index // 2
+            column = index % 2
+            grid.addWidget(self._build_channel_card(index, workspace), row, column)
 
-            grid.addWidget(self._build_channel_card(left_channel, workspace), row, 1)
-
-            center_text = QtWidgets.QLabel(center_label, workspace)
-            center_text.setObjectName("laneLabel")
-            center_text.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            grid.addWidget(center_text, row, 2)
-
-            grid.addWidget(self._build_channel_card(right_channel, workspace), row, 3)
-
+        grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
         workspace_layout.addLayout(grid, stretch=1)
         layout.addWidget(workspace, stretch=1)
         return widget
@@ -501,6 +718,45 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(desc_label)
         return frame
 
+    def _build_status_card(
+        self,
+        title: str,
+        indicator_key: str,
+        primary_key: str,
+        primary_label: str,
+        fields: list[tuple[str, str]],
+    ) -> QtWidgets.QWidget:
+        card = self._panel_card(title, self)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(QtWidgets.QLabel("状态", card))
+        lamp = IndicatorLamp(card)
+        self._register_lamp(indicator_key, lamp)
+        header.addWidget(lamp)
+        header.addStretch(1)
+        header.addWidget(self._create_snapshot_label(primary_key, card, object_name="statusMetricValue"))
+        layout.addLayout(header)
+
+        label = QtWidgets.QLabel(primary_label, card)
+        label.setObjectName("mutedText")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        form = QtWidgets.QFormLayout()
+        for field_key, field_label in fields:
+            form.addRow(field_label, self._create_snapshot_label(field_key, card))
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _static_value_label(self, text: str, parent: QtWidgets.QWidget) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text, parent)
+        label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setObjectName("statusValue")
+        return label
+
     def _build_control_strip(self) -> QtWidgets.QWidget:
         frame = QtWidgets.QFrame(self)
         frame.setObjectName("controlStrip")
@@ -584,9 +840,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._channel_layout_combo.addItem("采样交织", "interleaved")
         self._channel_layout_combo.addItem("按通道连续", "channel-major")
 
-        self._data1_rate_spin = QtWidgets.QDoubleSpinBox(card)
-        self._data1_rate_spin.setRange(0.1, 10000.0)
-        self._data1_rate_spin.setDecimals(2)
+        if self._data1_rate_spin is None:
+            self._data1_rate_spin = QtWidgets.QDoubleSpinBox(card)
+            self._data1_rate_spin.setRange(0.1, 10000.0)
+            self._data1_rate_spin.setDecimals(2)
         self._data2_rate_spin = QtWidgets.QDoubleSpinBox(card)
         self._data2_rate_spin.setRange(0.1, 10000.0)
         self._data2_rate_spin.setDecimals(2)
@@ -603,8 +860,9 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("长度单位", self._length_field_units_combo)
         form.addRow("字节序", self._byte_order_combo)
         form.addRow("通道排列", self._channel_layout_combo)
-        form.addRow("采样率1", self._data1_rate_spin)
         form.addRow("采样率2", self._data2_rate_spin)
+        if self._data1_rate_spin.parent() is card:
+            form.insertRow(0, "采样率", self._data1_rate_spin)
         layout.addLayout(form)
 
         self._connection_mode_hint_label = QtWidgets.QLabel(card)
@@ -653,7 +911,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_int32_gain_spin.setDecimals(6)
         self._storage_int32_gain_spin.setSingleStep(1000.0)
         self._storage_network_edit = QtWidgets.QLineEdit(card)
-        self._storage_station_edit = QtWidgets.QLineEdit(card)
         self._storage_location_edit = QtWidgets.QLineEdit(card)
         self._storage_channel_codes_table = self._create_channel_codes_table(card)
 
@@ -673,7 +930,10 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("数据类型(存储/远传)", self._storage_output_data_type_combo)
         form.addRow("增益", self._storage_int32_gain_spin)
         form.addRow("网络码", self._storage_network_edit)
-        form.addRow("台站码", self._storage_station_edit)
+        if self._storage_station_edit is None:
+            self._storage_station_edit = QtWidgets.QLineEdit(card)
+            self._storage_station_edit.setPlaceholderText("输入保存文件名")
+            form.addRow("文件名", self._storage_station_edit)
         form.addRow("位置码", self._storage_location_edit)
         form.addRow("通道码", self._storage_channel_codes_table)
         form.addRow(self._capture_enabled_checkbox)
@@ -764,6 +1024,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         plot = self._create_plot_widget(parent=card)
         plot.setMinimumHeight(150)
+        self._plot_widgets[channel_index] = plot
         curve = plot.plot(pen=pg.mkPen(self._channel_color(channel_index), width=1.8))
         self._plots[channel_index] = curve
         layout.addWidget(plot, stretch=1)
@@ -841,9 +1102,9 @@ class MainWindow(QtWidgets.QMainWindow):
         plot = pg.PlotWidget(parent=parent)
         plot.setBackground("w")
         plot.showGrid(x=True, y=True, alpha=0.18)
-        plot.setMenuEnabled(False)
-        plot.setMouseEnabled(x=False, y=False)
-        plot.hideButtons()
+        plot.setMenuEnabled(True)
+        plot.setMouseEnabled(x=True, y=True)
+        plot.showButtons()
         axis_pen = pg.mkPen("#53657f", width=1)
         text_pen = pg.mkPen("#1d2d44", width=1)
         for axis_name in ("left", "bottom"):
@@ -876,11 +1137,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._plot_window_seconds_spin = spin
         return spin
 
+    def _create_waveform_reset_button(self, parent: QtWidgets.QWidget) -> QtWidgets.QPushButton:
+        button = QtWidgets.QPushButton("复位视图", parent)
+        button.clicked.connect(self._reset_waveform_views)
+        return button
+
     def _on_mode_selector_changed(self, combo: QtWidgets.QComboBox, index: int) -> None:  # noqa: ARG002
         self._set_mode(str(combo.currentData()))
 
-    def _create_snapshot_label(self, key: str, parent: QtWidgets.QWidget) -> QtWidgets.QLabel:
+    def _create_snapshot_label(
+        self,
+        key: str,
+        parent: QtWidgets.QWidget,
+        *,
+        object_name: str = "statusValue",
+    ) -> QtWidgets.QLabel:
         label = _status_value_label(parent)
+        label.setObjectName(object_name)
         self._status_labels.setdefault(key, []).append(label)
         return label
 
@@ -891,6 +1164,10 @@ class MainWindow(QtWidgets.QMainWindow):
         group = QtWidgets.QGroupBox(title, parent)
         group.setObjectName("panelCard")
         return group
+
+    def _copy_ftp_info(self) -> None:
+        QtWidgets.QApplication.clipboard().setText(FTP_CONNECTION_TEXT)
+        self.statusBar().showMessage("FTP 连接信息已复制", 3000)
 
     def _configure_window_geometry(self) -> None:
         screen = QtWidgets.QApplication.primaryScreen()
@@ -1025,6 +1302,12 @@ class MainWindow(QtWidgets.QMainWindow):
             combo.blockSignals(True)
             combo.setCurrentIndex(target_index)
             combo.blockSignals(False)
+
+    def _reset_waveform_views(self) -> None:
+        for plot in self._plot_widgets:
+            if plot is not None:
+                plot.enableAutoRange()
+                plot.autoRange()
 
     def _choose_storage_root(self) -> None:
         assert self._storage_root_edit is not None
@@ -1325,8 +1608,30 @@ class MainWindow(QtWidgets.QMainWindow):
             return f"{int(size)} {units[unit_index]}"
         return f"{size:.1f} {units[unit_index]}"
 
+    @staticmethod
+    def _format_gnss_timestamp(value: str | None) -> str:
+        if not value:
+            return "-"
+        text = value.strip()
+        if len(text) < 20 or not text.isdigit():
+            return text
+        return (
+            f"{text[0:4]}-{text[4:6]}-{text[6:8]} "
+            f"{text[8:10]}:{text[10:12]}:{text[12:14]}.{text[14:20]}"
+        )
+
     def _update_status(self, snapshot: RuntimeSnapshot) -> None:
+        processing_active = self._runtime.is_processing_active()
+        if not snapshot.gnss_enabled:
+            satellite_status = "未启用"
+        elif snapshot.gnss_connected and not snapshot.gnss_fallback_active:
+            satellite_status = "已锁定"
+        elif snapshot.gnss_connected:
+            satellite_status = "授时回退"
+        else:
+            satellite_status = "未连接"
         values = {
+            "processing_active": "运行中" if processing_active else "已停止",
             "data_connected": "已连接" if snapshot.data_connected else "未连接",
             "control_connected": "已连接" if snapshot.control_connected else "未连接",
             "source_sample_rate": "-" if snapshot.source_sample_rate is None else f"{snapshot.source_sample_rate:.2f} Hz",
@@ -1358,9 +1663,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "capture_enabled": "已启用" if snapshot.capture_enabled else "未启用",
             "gnss_enabled": "已启用" if snapshot.gnss_enabled else "未启用",
             "gnss_connected": "已连接" if snapshot.gnss_connected else "未连接",
+            "satellite_status": satellite_status,
             "gnss_mode": snapshot.gnss_mode,
             "gnss_port": snapshot.gnss_port or "-",
-            "gnss_last_timestamp": snapshot.gnss_last_timestamp or "-",
+            "gnss_last_timestamp": self._format_gnss_timestamp(snapshot.gnss_last_timestamp),
             "gnss_last_error": snapshot.gnss_last_error or "-",
             "gnss_fallback_active": "是" if snapshot.gnss_fallback_active else "否",
             "last_error": snapshot.last_error or "-",
@@ -1370,33 +1676,66 @@ class MainWindow(QtWidgets.QMainWindow):
             for label in labels:
                 label.setText(value)
 
-        bool_values = {
-            "data_connected": snapshot.data_connected,
-            "control_connected": snapshot.control_connected,
-            "storage_enabled": snapshot.storage_enabled,
-            "datalink_enabled": snapshot.datalink_enabled,
-            "datalink_connected": snapshot.datalink_connected,
-            "gnss_enabled": snapshot.gnss_enabled,
-            "gnss_connected": snapshot.gnss_connected,
-            "capture_enabled": snapshot.capture_enabled,
-        }
         for key, lamps in self._status_lamps.items():
-            active = bool_values.get(key, False)
+            state = self._lamp_state_for_snapshot(snapshot, key, processing_active=processing_active)
             for lamp in lamps:
-                lamp.set_active(active)
+                lamp.set_state(state)
 
         self._update_queue_bar("processing", snapshot.queue_depth, PROCESSING_QUEUE_CAPACITY)
         self._update_queue_bar("storage", snapshot.storage_queue_depth, STORAGE_QUEUE_CAPACITY)
         self._update_queue_bar("datalink", snapshot.datalink_publish_queue_depth, DATALINK_QUEUE_CAPACITY)
 
         if self._gnss_last_timestamp_label is not None:
-            self._gnss_last_timestamp_label.setText(snapshot.gnss_last_timestamp or "-")
+            self._gnss_last_timestamp_label.setText(self._format_gnss_timestamp(snapshot.gnss_last_timestamp))
         if self._gnss_last_error_label is not None:
             self._gnss_last_error_label.setText(snapshot.gnss_last_error or "-")
         if self._remote_web_label is not None:
             self._remote_web_label.setText(f"http://{self._settings.web.host}:{self._settings.web.port}")
         if self._remote_control_label is not None:
             self._remote_control_label.setText(f"{self._settings.control_server.host}:{self._settings.control_server.port}")
+
+    def _lamp_state_for_snapshot(
+        self,
+        snapshot: RuntimeSnapshot,
+        key: str,
+        *,
+        processing_active: bool,
+    ) -> str:
+        if key == "data_connected":
+            if snapshot.data_connected:
+                return "ok"
+            return "warning" if processing_active else "idle"
+        if key == "control_connected":
+            return "ok" if snapshot.control_connected else "idle"
+        if key == "storage_enabled":
+            if not snapshot.storage_enabled:
+                return "idle"
+            if snapshot.storage_disk_usage_percent is None:
+                return "ok"
+            if snapshot.storage_disk_usage_percent >= 90.0:
+                return "error"
+            if snapshot.storage_disk_usage_percent >= 75.0:
+                return "warning"
+            return "ok"
+        if key == "datalink_connected":
+            if snapshot.datalink_connected:
+                return "ok"
+            return "error" if snapshot.datalink_enabled else "idle"
+        if key == "gnss_connected":
+            if not snapshot.gnss_enabled:
+                return "idle"
+            if snapshot.gnss_connected and not snapshot.gnss_fallback_active:
+                return "ok"
+            if snapshot.gnss_fallback_active:
+                return "warning"
+            return "error"
+        if key == "gnss_enabled":
+            return "ok" if snapshot.gnss_enabled else "idle"
+        if key == "datalink_enabled":
+            return "ok" if snapshot.datalink_enabled else "idle"
+        if key == "capture_enabled":
+            return "ok" if snapshot.capture_enabled else "idle"
+        return "ok" if getattr(snapshot, key, False) else "idle"
 
     def _update_queue_bar(self, key: str, value: int, capacity: int) -> None:
         bar = self._queue_bars.get(key)
@@ -1561,6 +1900,11 @@ class MainWindow(QtWidgets.QMainWindow):
             QLabel#statusValue {
                 color: #1d2636;
             }
+            QLabel#statusMetricValue {
+                color: #17375d;
+                font-size: 18px;
+                font-weight: 700;
+            }
             QLabel#laneLabel {
                 min-width: 88px;
                 color: #1c2f4b;
@@ -1609,6 +1953,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 border: 1px solid #9fb0ca;
                 padding: 4px 6px;
                 selection-background-color: #9db7e6;
+            }
+            QPlainTextEdit#downloadGuide {
+                background: #fbfcff;
+                border: 1px solid #9fb0ca;
+                font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+                font-size: 13px;
             }
             QCheckBox {
                 spacing: 8px;

@@ -3,19 +3,268 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>datalink-host 远程控制台</title>
-  <link
-    rel="stylesheet"
-    href="./assets/bootstrap.min.css"
-  >
+  <title>高精度长基线光纤应变信号远程控制软件</title>
+  <link rel="stylesheet" href="./assets/bootstrap.min.css">
   <style>
+    :root {
+      --line: #5d87df;
+      --line-dark: #2f5fad;
+      --panel: #f7f7f7;
+      --header: #b9ccea;
+      --text: #101010;
+      --muted: #596579;
+      --ok: #94d47b;
+      --warn: #f0c35c;
+      --bad: #e26b6b;
+      --idle: #d6dde8;
+    }
+
     body {
-      background: #f8f9fb;
+      margin: 0;
+      background: #ffffff;
+      color: var(--text);
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif;
+      font-size: 16px;
+    }
+
+    .app-shell {
+      margin: 22px;
+      min-height: calc(100vh - 44px);
+      border: 1px solid var(--line);
+      background: #ffffff;
+    }
+
+    .brand-header {
+      position: relative;
+      min-height: 106px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--header);
+      border-bottom: 1px solid var(--line);
+      padding: 18px 110px 18px 110px;
+    }
+
+    .brand-title {
+      margin: 0;
+      font-size: 38px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-align: center;
+      line-height: 1.25;
+    }
+
+    .brand-seal {
+      position: absolute;
+      right: 58px;
+      top: 24px;
+      width: 70px;
+      height: 70px;
+    }
+
+    .connection-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: end;
+      padding: 12px 20px;
+      border-bottom: 1px solid #d7e2ff;
+      background: #fbfdff;
+    }
+
+    .connection-strip .form-control {
+      min-width: 150px;
+    }
+
+    .connection-status {
+      flex: 1 1 300px;
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid #b4c7f1;
+      background: #ffffff;
+      color: var(--muted);
+    }
+
+    .target-chip {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid #b4c7f1;
+      background: #eef4ff;
+      color: #1c3d76;
+      white-space: nowrap;
+    }
+
+    .nav-shell {
+      padding: 14px 20px 0 20px;
+      background: #ffffff;
+    }
+
+    .main-tabs {
+      border: 0;
+      gap: 0;
+    }
+
+    .main-tabs .nav-link {
+      min-width: 112px;
+      color: #000000;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      background: #ffffff;
+      padding: 4px 14px;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .main-tabs .nav-link.active {
+      background: var(--panel);
+      color: #000000;
+      border-bottom-color: var(--panel);
+      font-weight: 600;
+    }
+
+    .page-panel {
+      margin: 0 20px 26px 20px;
+      min-height: 650px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 28px 24px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+    }
+
+    .status-panel,
+    .content-panel,
+    .wave-panel,
+    .debug-panel {
+      position: relative;
+      border: 1px solid #333333;
+      background: #ffffff;
+      padding: 22px;
+    }
+
+    .status-panel {
+      min-height: 290px;
+    }
+
+    .panel-title {
+      margin: -4px 0 22px 0;
+      text-align: center;
+      font-size: 22px;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      position: absolute;
+      top: 18px;
+      right: 68px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid var(--line-dark);
+      background: var(--idle);
+    }
+
+    .status-dot.ok {
+      background: var(--ok);
+    }
+
+    .status-dot.warn {
+      background: var(--warn);
+    }
+
+    .status-dot.bad {
+      background: var(--bad);
+    }
+
+    .kv-list {
+      display: grid;
+      gap: 10px;
+      font-size: 18px;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 12px;
+      align-items: baseline;
+    }
+
+    .kv-label {
+      color: #111111;
+      white-space: nowrap;
+    }
+
+    .kv-value {
+      font-weight: 600;
+      word-break: break-word;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .settings-layout {
+      display: grid;
+      grid-template-columns: minmax(320px, 720px) 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+
+    .settings-panel {
+      border: 1px solid var(--line);
+      background: #ffffff;
+      padding: 34px 42px;
+      min-height: 220px;
+    }
+
+    .settings-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-top: 18px;
+    }
+
+    .wave-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    .wave-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px 28px;
+    }
+
+    .wave-panel {
+      min-height: 190px;
+      padding: 12px 14px 14px;
+    }
+
+    .wave-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
     }
 
     .chart-shell {
-      min-height: 320px;
-      height: 320px;
+      height: 145px;
+      min-height: 145px;
     }
 
     .chart-shell canvas {
@@ -23,8 +272,31 @@
       height: 100% !important;
     }
 
+    .download-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 430px) 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+
+    .download-guide {
+      font-size: 20px;
+      line-height: 1.9;
+      margin: 0;
+      white-space: pre-wrap;
+    }
+
+    .debug-layout {
+      display: grid;
+      gap: 18px;
+    }
+
+    .accordion-button {
+      font-size: 17px;
+    }
+
     .console {
-      min-height: 320px;
+      min-height: 260px;
       max-height: 420px;
       overflow: auto;
       white-space: pre-wrap;
@@ -34,353 +306,332 @@
       line-height: 1.6;
     }
 
-    .metric-card .metric-value {
-      font-size: 1.6rem;
-      font-weight: 700;
+    .btn {
+      border-radius: 0;
     }
 
-    .sticky-toolbar {
-      position: sticky;
-      top: 0;
-      z-index: 1020;
-      background: rgba(248, 249, 251, 0.92);
-      backdrop-filter: blur(10px);
+    .form-control,
+    .form-select {
+      border-radius: 0;
+    }
+
+    @media (max-width: 1100px) {
+      .status-grid,
+      .wave-grid,
+      .settings-layout,
+      .download-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .app-shell {
+        margin: 8px;
+        min-height: calc(100vh - 16px);
+      }
+
+      .brand-header {
+        padding: 18px 20px 90px 20px;
+      }
+
+      .brand-title {
+        font-size: 28px;
+      }
+
+      .brand-seal {
+        right: calc(50% - 35px);
+        top: auto;
+        bottom: 12px;
+      }
+
+      .nav-shell,
+      .page-panel {
+        margin-left: 10px;
+        margin-right: 10px;
+      }
+
+      .page-panel {
+        padding: 18px 14px;
+      }
+
+      .main-tabs .nav-link {
+        min-width: auto;
+        font-size: 16px;
+      }
+
+      .kv-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="container-fluid py-3 py-lg-4">
-    <div class="row g-3 mb-3 sticky-toolbar pb-2">
-      <div class="col-12">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="d-flex flex-column flex-xl-row gap-3 align-items-xl-end">
-              <div class="flex-grow-1">
-                <div class="d-flex flex-column flex-md-row gap-3">
-                  <div class="flex-fill">
-                    <label class="form-label mb-1" for="api-host">API 地址</label>
-                    <input id="api-host" class="form-control" type="text" placeholder="127.0.0.1">
-                  </div>
-                  <div style="width: 10rem;">
-                    <label class="form-label mb-1" for="api-port">端口</label>
-                    <input id="api-port" class="form-control" type="number" min="1" max="65535" placeholder="18080">
-                  </div>
-                </div>
-                <div class="small text-secondary mt-2">
-                  这是纯静态页面。输入目标服务的 IP 和端口后，页面会直接调用远程 `datalink-host` 的 Web API。
-                </div>
-              </div>
-              <div class="d-flex flex-wrap gap-2">
-                <button id="connect-btn" class="btn btn-primary">连接远程 API</button>
-                <button id="use-current-origin-btn" class="btn btn-outline-secondary">使用当前地址</button>
-                <button id="reload-config-btn" class="btn btn-outline-secondary" disabled>重载配置</button>
-                <button id="apply-config-btn" class="btn btn-success" disabled>应用配置</button>
-                <button id="start-btn" class="btn btn-outline-primary" disabled>启动接收</button>
-                <button id="stop-btn" class="btn btn-outline-danger" disabled>停止接收</button>
-              </div>
-            </div>
-            <div class="d-flex flex-column flex-lg-row gap-2 align-items-lg-center mt-3">
-              <div class="badge text-bg-light fs-6 px-3 py-2">目标: <span id="target-url">未连接</span></div>
-              <div id="connection-alert" class="alert alert-secondary py-2 px-3 mb-0 flex-grow-1">尚未连接远程服务。</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+  <div class="app-shell">
+    <header class="brand-header">
+      <h1 class="brand-title">高精度长基线光纤应变信号远程控制软件</h1>
+      <svg class="brand-seal" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" fill="#0068b7"/>
+        <circle cx="50" cy="50" r="36" fill="#ffffff"/>
+        <circle cx="50" cy="50" r="30" fill="none" stroke="#0068b7" stroke-width="3"/>
+        <path d="M50 22v44M29 44h42M36 36c5 7 9 10 14 10s9-3 14-10" fill="none" stroke="#0068b7" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="50" cy="44" r="6" fill="#0068b7"/>
+        <text x="50" y="80" text-anchor="middle" font-size="9" fill="#e23b2e" font-family="Arial">1960</text>
+      </svg>
+    </header>
 
-    <div class="row g-3 mb-3">
-      <div class="col-sm-6 col-xl-2">
-        <div class="card metric-card shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small">接收状态</div>
-            <div class="metric-value" id="metric-processing">-</div>
-            <div class="small text-secondary" id="metric-data-connection">数据连接 -</div>
-          </div>
-        </div>
+    <section class="connection-strip">
+      <div>
+        <label class="form-label mb-1" for="api-host">API 地址</label>
+        <input id="api-host" class="form-control form-control-sm" type="text" placeholder="127.0.0.1">
       </div>
-      <div class="col-sm-6 col-xl-2">
-        <div class="card metric-card shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small">已收包数</div>
-            <div class="metric-value" id="metric-packets">0</div>
-            <div class="small text-secondary">字节 <span id="metric-bytes">0</span></div>
-          </div>
-        </div>
+      <div>
+        <label class="form-label mb-1" for="api-port">端口</label>
+        <input id="api-port" class="form-control form-control-sm" type="number" min="1" max="65535" placeholder="18080">
       </div>
-      <div class="col-sm-6 col-xl-2">
-        <div class="card metric-card shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small">源采样率</div>
-            <div class="metric-value" id="metric-rate">-</div>
-            <div class="small text-secondary">处理队列 <span id="metric-queue">0</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-sm-6 col-xl-2">
-        <div class="card metric-card shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small">处理丢帧</div>
-            <div class="metric-value" id="metric-dropped">0</div>
-            <div class="small text-secondary">存储队列 <span id="metric-storage-queue">0</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-sm-6 col-xl-2">
-        <div class="card metric-card shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small">远传连接</div>
-            <div class="metric-value" id="metric-datalink">-</div>
-            <div class="small text-secondary">发布队列 <span id="metric-datalink-queue">0</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="col-sm-6 col-xl-2">
-        <div class="card metric-card shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small">GNSS</div>
-            <div class="metric-value" id="metric-gnss">-</div>
-            <div class="small text-secondary" id="metric-gnss-time">时间 -</div>
-          </div>
-        </div>
-      </div>
-    </div>
+      <button id="connect-btn" class="btn btn-primary btn-sm">连接</button>
+      <button id="use-current-origin-btn" class="btn btn-outline-secondary btn-sm">使用当前地址</button>
+      <button id="reload-config-btn" class="btn btn-outline-secondary btn-sm" disabled>重载配置</button>
+      <button id="apply-config-btn" class="btn btn-success btn-sm" disabled>应用配置</button>
+      <button id="start-btn" class="btn btn-outline-primary btn-sm" disabled>启动接收</button>
+      <button id="stop-btn" class="btn btn-outline-danger btn-sm" disabled>停止接收</button>
+      <div class="target-chip">目标: <span id="target-url" class="ms-1">未连接</span></div>
+      <div id="connection-alert" class="connection-status">尚未连接远程服务。</div>
+    </section>
 
-    <ul class="nav nav-tabs mb-3" id="main-tab" role="tablist">
-      <li class="nav-item" role="presentation">
-        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">总览</button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-wave" type="button" role="tab">波形</button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analysis" type="button" role="tab">分析</button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-logs" type="button" role="tab">日志</button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-packets" type="button" role="tab">原始包</button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-config" type="button" role="tab">配置</button>
-      </li>
-    </ul>
+    <div class="nav-shell">
+      <ul class="nav nav-tabs main-tabs" id="main-tab" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-status" type="button" role="tab">基本状态</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-settings" type="button" role="tab">参数设置</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-wave" type="button" role="tab">波形显示</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-download" type="button" role="tab">数据下载</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-debug" type="button" role="tab">其他</button>
+        </li>
+      </ul>
+    </div>
 
     <div class="tab-content">
-      <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
-        <div class="row g-3">
-          <div class="col-lg-6">
-            <div class="card shadow-sm h-100">
-              <div class="card-header">运行状态</div>
-              <div class="card-body">
-                <div class="list-group" id="overview-status-list"></div>
+      <div class="tab-pane fade show active" id="tab-status" role="tabpanel">
+        <div class="page-panel">
+          <div class="status-grid">
+            <section class="status-panel">
+              <span id="basic-dot" class="status-dot"></span>
+              <h2 class="panel-title">基本参数</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">设备 IP</span><span id="status-device-ip" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">设备端口</span><span id="status-device-port" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">帧头</span><span id="status-frame-header" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">源采样率</span><span id="status-source-rate" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">采样率1</span><span id="status-data1-rate" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">采样率2</span><span id="status-data2-rate" class="kv-value">-</span></div>
               </div>
-            </div>
+            </section>
+
+            <section class="status-panel">
+              <span id="gnss-dot" class="status-dot"></span>
+              <h2 class="panel-title">GNSS状态</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">卫星状态</span><span id="status-satellite" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">GNSS 时间</span><span id="status-gnss-time" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">GNSS 连接</span><span id="status-gnss" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">GNSS 端口</span><span id="status-gnss-port" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">回退状态</span><span id="status-gnss-fallback" class="kv-value">-</span></div>
+              </div>
+            </section>
+
+            <section class="status-panel">
+              <span id="disk-dot" class="status-dot"></span>
+              <h2 class="panel-title">磁盘状态</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">硬盘剩余容量</span><span id="status-disk-free" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">磁盘利用率</span><span id="status-disk-usage" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">存储状态</span><span id="status-storage" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">存储目录</span><span id="status-storage-root" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">存储错误</span><span id="status-storage-error" class="kv-value">-</span></div>
+              </div>
+            </section>
           </div>
-          <div class="col-lg-6">
-            <div class="card shadow-sm h-100">
-              <div class="card-header">异常与拥塞</div>
-              <div class="card-body d-grid gap-3">
-                <div>
-                  <div class="text-secondary small mb-1">最近错误</div>
-                  <div id="overview-last-error" class="form-control bg-body-tertiary">-</div>
+
+          <div class="status-grid mt-4">
+            <section class="status-panel">
+              <span id="transfer-dot" class="status-dot"></span>
+              <h2 class="panel-title">数据传输</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">接收状态</span><span id="status-transfer-state" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">数据连接</span><span id="status-data-connection" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">接收数量</span><span id="status-packets" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">接收字节</span><span id="status-bytes" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">处理丢帧</span><span id="status-dropped" class="kv-value">-</span></div>
+              </div>
+            </section>
+
+            <section class="status-panel">
+              <span id="datalink-dot" class="status-dot"></span>
+              <h2 class="panel-title">远程传输</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">远传连接</span><span id="status-datalink" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">传输数量</span><span id="status-datalink-count" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">传输字节</span><span id="status-datalink-bytes" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">连接次数</span><span id="status-datalink-reconnects" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">远传错误</span><span id="status-datalink-error" class="kv-value">-</span></div>
+              </div>
+            </section>
+
+            <section class="status-panel">
+              <h2 class="panel-title">运行提示</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">控制连接</span><span id="status-control" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">处理队列</span><span id="status-queue" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">最近错误</span><span id="status-last-error" class="kv-value">-</span></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-settings" role="tabpanel">
+        <div class="page-panel">
+          <div class="settings-layout">
+            <section class="settings-panel">
+              <div class="row g-4">
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="data1-rate">采样率</label>
+                  <div class="input-group">
+                    <input id="data1-rate" class="form-control form-control-lg" type="number" min="0.1" step="0.1">
+                    <span class="input-group-text rounded-0">Hz</span>
+                  </div>
                 </div>
-                <div>
-                  <div class="text-secondary small mb-1">存储错误</div>
-                  <div id="overview-storage-error" class="form-control bg-body-tertiary">-</div>
-                </div>
-                <div>
-                  <div class="text-secondary small mb-1">远传错误</div>
-                  <div id="overview-datalink-error" class="form-control bg-body-tertiary">-</div>
-                </div>
-                <div>
-                  <div class="text-secondary small mb-1">远传发布错误</div>
-                  <div id="overview-datalink-publish-error" class="form-control bg-body-tertiary">-</div>
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="storage-station">文件名</label>
+                  <input id="storage-station" class="form-control form-control-lg" type="text" placeholder="输入保存文件名">
                 </div>
               </div>
-            </div>
+              <div class="settings-actions">
+                <button id="save-main-settings-btn" class="btn btn-success" disabled>应用参数设置</button>
+                <span class="muted">高级采集、存储、远传参数已放入“其他”。</span>
+              </div>
+            </section>
           </div>
         </div>
       </div>
 
       <div class="tab-pane fade" id="tab-wave" role="tabpanel">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="row g-3 align-items-end mb-3">
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="wave-mode">波形来源</label>
-                <select id="wave-mode" class="form-select">
-                  <option value="raw" selected>原始值</option>
-                  <option value="data1">降采样1</option>
-                  <option value="data2">降采样2</option>
-                </select>
-              </div>
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="wave-channel">显示通道</label>
-                <select id="wave-channel" class="form-select"></select>
-              </div>
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="wave-window-seconds">显示时长(秒)</label>
-                <input id="wave-window-seconds" class="form-control" type="number" min="1" max="120" step="1" value="20">
-              </div>
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="refresh-ms">刷新周期</label>
-                <select id="refresh-ms" class="form-select">
-                  <option value="250">250 ms</option>
-                  <option value="500">500 ms</option>
-                  <option value="1000" selected>1 s</option>
-                </select>
-              </div>
+        <div class="page-panel">
+          <div class="wave-toolbar">
+            <div>
+              <label class="form-label mb-1" for="wave-mode">波形来源</label>
+              <select id="wave-mode" class="form-select">
+                <option value="raw" selected>原始值</option>
+                <option value="data1">采样率1</option>
+                <option value="data2">采样率2</option>
+              </select>
             </div>
-            <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-              <div class="small text-secondary" id="wave-summary">等待连接远程服务。</div>
-              <div class="small text-secondary" id="wave-meta">-</div>
+            <div>
+              <label class="form-label mb-1" for="wave-window-seconds">显示时长</label>
+              <input id="wave-window-seconds" class="form-control" type="number" min="1" max="120" step="1" value="10">
             </div>
-            <div class="chart-shell">
-              <canvas id="wave-chart"></canvas>
+            <div>
+              <label class="form-label mb-1" for="refresh-ms">刷新周期</label>
+              <select id="refresh-ms" class="form-select">
+                <option value="250">250 ms</option>
+                <option value="500">500 ms</option>
+                <option value="1000" selected>1 s</option>
+              </select>
             </div>
+            <div class="ms-auto muted" id="wave-meta">-</div>
+          </div>
+          <div class="wave-grid">
+            <section class="wave-panel">
+              <div class="wave-title"><span>CH1</span><span id="wave-label-0" class="muted"></span></div>
+              <div class="chart-shell"><canvas id="wave-chart-0"></canvas></div>
+            </section>
+            <section class="wave-panel">
+              <div class="wave-title"><span>CH2</span><span id="wave-label-1" class="muted"></span></div>
+              <div class="chart-shell"><canvas id="wave-chart-1"></canvas></div>
+            </section>
+            <section class="wave-panel">
+              <div class="wave-title"><span>CH3</span><span id="wave-label-2" class="muted"></span></div>
+              <div class="chart-shell"><canvas id="wave-chart-2"></canvas></div>
+            </section>
+            <section class="wave-panel">
+              <div class="wave-title"><span>CH4</span><span id="wave-label-3" class="muted"></span></div>
+              <div class="chart-shell"><canvas id="wave-chart-3"></canvas></div>
+            </section>
+            <section class="wave-panel">
+              <div class="wave-title"><span>CH5</span><span id="wave-label-4" class="muted"></span></div>
+              <div class="chart-shell"><canvas id="wave-chart-4"></canvas></div>
+            </section>
+            <section class="wave-panel">
+              <div class="wave-title"><span>CH6</span><span id="wave-label-5" class="muted"></span></div>
+              <div class="chart-shell"><canvas id="wave-chart-5"></canvas></div>
+            </section>
+          </div>
+          <div id="wave-summary" class="mt-4 fs-5">默认显示最近 10s，多通道波形会在连接设备后自动刷新。</div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="tab-download" role="tabpanel">
+        <div class="page-panel">
+          <div class="download-grid">
+            <section class="content-panel">
+              <h2 class="panel-title">FTP连接信息</h2>
+              <div class="kv-list fs-5">
+                <div class="kv-row"><span class="kv-label">IP</span><span class="kv-value">10.2.16.214</span></div>
+                <div class="kv-row"><span class="kv-label">端口</span><span class="kv-value">21</span></div>
+                <div class="kv-row"><span class="kv-label">用户名</span><span class="kv-value">Semi</span></div>
+                <div class="kv-row"><span class="kv-label">密码</span><span class="kv-value">空</span></div>
+              </div>
+              <button id="copy-download-info-btn" class="btn btn-outline-primary mt-4">复制连接信息</button>
+            </section>
+
+            <section class="content-panel">
+              <h2 class="panel-title text-start">下载说明</h2>
+              <pre class="download-guide">设备数据通过 FTP 协议下载。
+
+建议使用随设备提供的 FileZilla 软件：
+1. 打开 FileZilla。
+2. 主机输入 10.2.16.214，端口输入 21。
+3. 用户名输入 Semi，密码保持为空。
+4. 点击快速连接，进入设备数据目录。
+5. 选择需要下载的数据文件，拖拽到本地目录完成下载。
+6. 下载结束后断开 FTP 连接。</pre>
+            </section>
           </div>
         </div>
       </div>
 
-      <div class="tab-pane fade" id="tab-analysis" role="tabpanel">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="row g-3 align-items-end mb-3">
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="analysis-channel">分析通道</label>
-                <select id="analysis-channel" class="form-select"></select>
-              </div>
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="analysis-window">PSD 样本数</label>
-                <select id="analysis-window" class="form-select">
-                  <option value="256">256</option>
-                  <option value="512">512</option>
-                  <option value="1024">1024</option>
-                  <option value="2048" selected>2048</option>
-                </select>
-              </div>
-            </div>
-            <div class="row g-3">
-              <div class="col-lg-6">
-                <div class="card bg-body-tertiary border-0">
-                  <div class="card-body">
-                    <div class="small text-secondary mb-2">时域波形</div>
-                    <div class="chart-shell">
-                      <canvas id="analysis-time-chart"></canvas>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="col-lg-6">
-                <div class="card bg-body-tertiary border-0">
-                  <div class="card-body">
-                    <div class="small text-secondary mb-2">PSD</div>
-                    <div class="chart-shell">
-                      <canvas id="analysis-psd-chart"></canvas>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="tab-pane fade" id="tab-logs" role="tabpanel">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="row g-3 align-items-end mb-3">
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="log-level">日志级别</label>
-                <select id="log-level" class="form-select">
-                  <option value="all">全部</option>
-                  <option value="info">信息</option>
-                  <option value="warning">警告</option>
-                  <option value="error">错误</option>
-                </select>
-              </div>
-              <div class="col-auto">
-                <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
-              </div>
-            </div>
-            <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="tab-pane fade" id="tab-packets" role="tabpanel">
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="row g-3 align-items-end mb-3">
-              <div class="col-sm-6 col-lg-3">
-                <label class="form-label" for="max-packets">最近打印包数</label>
-                <select id="max-packets" class="form-select">
-                  <option value="10">10</option>
-                  <option value="20" selected>20</option>
-                  <option value="30">30</option>
-                  <option value="40">40</option>
-                </select>
-              </div>
-              <div class="col-auto">
-                <button id="clear-packets-btn" class="btn btn-outline-secondary">清空视图</button>
-              </div>
-            </div>
-            <pre id="packets-console" class="console form-control bg-dark text-light">等待原始包...</pre>
-          </div>
-        </div>
-      </div>
-
-      <div class="tab-pane fade" id="tab-config" role="tabpanel">
-        <div class="row g-3">
-          <div class="col-12">
-            <div class="alert alert-light border shadow-sm mb-0">
-              这部分与桌面 GUI 保持同一套配置分组。修改后点击顶部“应用配置”，运行中的接收链路会自动重建。
-            </div>
-          </div>
-          <div class="col-12">
-            <div class="accordion" id="config-accordion">
+      <div class="tab-pane fade" id="tab-debug" role="tabpanel">
+        <div class="page-panel">
+          <div class="debug-layout">
+            <div class="accordion" id="debug-accordion">
               <div class="accordion-item">
                 <h2 class="accordion-header">
-                  <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#section-processing">
-                    处理参数
+                  <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#debug-processing">
+                    数据接入与协议解析
                   </button>
                 </h2>
-                <div id="section-processing" class="accordion-collapse collapse show" data-bs-parent="#config-accordion">
+                <div id="debug-processing" class="accordion-collapse collapse show" data-bs-parent="#debug-accordion">
                   <div class="accordion-body">
                     <div class="row g-3">
                       <div class="col-md-6">
-                        <label class="form-label" for="data1-rate">降采样1 采样率</label>
-                        <input id="data1-rate" class="form-control" type="number" min="0.1" step="0.1">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="data2-rate">降采样2 采样率</label>
+                        <label class="form-label" for="data2-rate">采样率2</label>
                         <input id="data2-rate" class="form-control" type="number" min="0.1" step="0.1">
                       </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-ingest">
-                    数据接入
-                  </button>
-                </h2>
-                <div id="section-ingest" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
-                  <div class="accordion-body">
-                    <div class="row g-3">
                       <div class="col-md-6">
                         <label class="form-label" for="data-mode">接入模式</label>
                         <select id="data-mode" class="form-select">
                           <option value="client">主动连接设备</option>
                           <option value="server">监听设备连接</option>
                         </select>
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="frame-header">帧头值</label>
-                        <input id="frame-header" class="form-control" type="text" placeholder="11 或 0x1234">
                       </div>
                       <div class="col-md-6">
                         <label class="form-label" for="listen-host">本地监听地址</label>
@@ -398,23 +649,10 @@
                         <label class="form-label" for="remote-port">设备端口</label>
                         <input id="remote-port" class="form-control" type="number" min="1" max="65535">
                       </div>
-                      <div class="col-12">
-                        <div id="mode-hint" class="alert alert-secondary py-2 mb-0"></div>
+                      <div class="col-md-6">
+                        <label class="form-label" for="frame-header">帧头值</label>
+                        <input id="frame-header" class="form-control" type="text" placeholder="11 或 0x1234">
                       </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-protocol">
-                    协议解析
-                  </button>
-                </h2>
-                <div id="section-protocol" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
-                  <div class="accordion-body">
-                    <div class="row g-3">
                       <div class="col-md-6">
                         <label class="form-label" for="frame-header-size">帧头字节数</label>
                         <select id="frame-header-size" class="form-select">
@@ -458,6 +696,9 @@
                           <option value="channel-major">按通道连续</option>
                         </select>
                       </div>
+                      <div class="col-12">
+                        <div id="mode-hint" class="alert alert-secondary py-2 mb-0"></div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -465,171 +706,236 @@
 
               <div class="accordion-item">
                 <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-storage">
-                    本地存储
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#debug-storage">
+                    本地存储与远程传输
                   </button>
                 </h2>
-                <div id="section-storage" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
+                <div id="debug-storage" class="accordion-collapse collapse" data-bs-parent="#debug-accordion">
                   <div class="accordion-body">
-                    <div class="form-check form-switch mb-3">
-                      <input id="storage-enabled" class="form-check-input" type="checkbox">
-                      <label class="form-check-label" for="storage-enabled">启用本地存储</label>
-                    </div>
-                    <div class="row g-3" id="storage-fields">
+                    <div class="row g-3">
                       <div class="col-12">
-                        <label class="form-label" for="storage-root">存储目录</label>
-                        <input id="storage-root" class="form-control" type="text" placeholder="E:\data">
+                        <div class="form-check form-switch">
+                          <input id="storage-enabled" class="form-check-input" type="checkbox">
+                          <label class="form-check-label" for="storage-enabled">启用本地存储</label>
+                        </div>
+                      </div>
+                      <div class="row g-3 m-0 p-0" id="storage-fields">
+                        <div class="col-12">
+                          <label class="form-label" for="storage-root">存储目录</label>
+                          <input id="storage-root" class="form-control" type="text" placeholder="E:\data">
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label" for="storage-duration">单文件时长(秒)</label>
+                          <input id="storage-duration" class="form-control" type="number" min="1">
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label" for="output-data-type">数据类型(存储/远传)</label>
+                          <select id="output-data-type" class="form-select">
+                            <option value="float32">float32</option>
+                            <option value="int32">INT32</option>
+                          </select>
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label" for="int32-gain">增益</label>
+                          <input id="int32-gain" class="form-control" type="number" min="0.000001" step="any" value="1000000">
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label" for="storage-network">网络码</label>
+                          <input id="storage-network" class="form-control" type="text">
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label" for="storage-location">位置码</label>
+                          <input id="storage-location" class="form-control" type="text">
+                        </div>
+                        <div class="col-12">
+                          <label class="form-label">通道码</label>
+                          <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                              <thead>
+                                <tr>
+                                  <th scope="col" style="width: 120px;">通道</th>
+                                  <th scope="col">通道码</th>
+                                </tr>
+                              </thead>
+                              <tbody id="storage-channel-codes-body"></tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="col-12 mt-3">
+                        <div class="form-check form-switch">
+                          <input id="datalink-enabled" class="form-check-input" type="checkbox">
+                          <label class="form-check-label" for="datalink-enabled">启用 DataLink 远传</label>
+                        </div>
+                      </div>
+                      <div class="row g-3 m-0 p-0" id="datalink-fields">
+                        <div class="col-md-6">
+                          <label class="form-label" for="datalink-host">远传主机</label>
+                          <input id="datalink-host" class="form-control" type="text" placeholder="10.2.12.61">
+                        </div>
+                        <div class="col-md-6">
+                          <label class="form-label" for="datalink-port">远传端口</label>
+                          <input id="datalink-port" class="form-control" type="number" min="1" max="65535">
+                        </div>
+                        <div class="col-12">
+                          <label class="form-label" for="datalink-stream-template">流模板</label>
+                          <input id="datalink-stream-template" class="form-control" type="text" placeholder="{network}_{station}_{location}_{channel}/MSEED">
+                        </div>
+                        <div class="col-md-6">
+                          <div class="form-check mt-4">
+                            <input id="ack-required" class="form-check-input" type="checkbox">
+                            <label class="form-check-label" for="ack-required">发送后等待 ACK</label>
+                          </div>
+                        </div>
+                        <div class="col-md-6">
+                          <div class="form-check mt-4">
+                            <input id="send-data2" class="form-check-input" type="checkbox">
+                            <label class="form-check-label" for="send-data2">同时发送采样率2</label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#debug-gnss">
+                    GNSS、抓包与日志
+                  </button>
+                </h2>
+                <div id="debug-gnss" class="accordion-collapse collapse" data-bs-parent="#debug-accordion">
+                  <div class="accordion-body">
+                    <div class="row g-3">
+                      <div class="col-md-6">
+                        <div class="form-check form-switch mb-3">
+                          <input id="capture-enabled" class="form-check-input" type="checkbox">
+                          <label class="form-check-label" for="capture-enabled">启用原始 TCP 抓包</label>
+                        </div>
+                        <div id="capture-fields">
+                          <label class="form-label" for="capture-path">抓包文件</label>
+                          <input id="capture-path" class="form-control" type="text" placeholder="./var/captures/session.dlhcap">
+                        </div>
                       </div>
                       <div class="col-md-6">
-                        <label class="form-label" for="storage-duration">单文件时长(秒)</label>
-                        <input id="storage-duration" class="form-control" type="number" min="1">
+                        <div class="form-check form-switch mb-3">
+                          <input id="gnss-enabled" class="form-check-input" type="checkbox">
+                          <label class="form-check-label" for="gnss-enabled">启用 GNSS 时间</label>
+                        </div>
+                        <div class="row g-3" id="gnss-fields">
+                          <div class="col-12">
+                            <label class="form-label" for="gnss-port">串口</label>
+                            <input id="gnss-port" class="form-control" type="text" list="gnss-port-options">
+                            <datalist id="gnss-port-options"></datalist>
+                          </div>
+                          <div class="col-md-6">
+                            <label class="form-label" for="gnss-baudrate">波特率</label>
+                            <input id="gnss-baudrate" class="form-control" type="number" min="1">
+                          </div>
+                          <div class="col-md-6">
+                            <label class="form-label" for="gnss-mode">模式</label>
+                            <select id="gnss-mode" class="form-select">
+                              <option value="debug">调试模式</option>
+                              <option value="deploy">部署模式</option>
+                            </select>
+                          </div>
+                          <div class="col-md-6">
+                            <label class="form-label" for="gnss-poll">轮询间隔(秒)</label>
+                            <input id="gnss-poll" class="form-control" type="number" min="0.01" step="0.01">
+                          </div>
+                          <div class="col-md-6">
+                            <label class="form-label" for="gnss-timestamp-interval">授时等待超时(秒)</label>
+                            <input id="gnss-timestamp-interval" class="form-control" type="number" min="0.001" step="0.001">
+                          </div>
+                        </div>
                       </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="output-data-type">数据类型(存储/远传)</label>
-                        <select id="output-data-type" class="form-select">
-                          <option value="float32">float32</option>
-                          <option value="int32">INT32</option>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="accordion-item">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#debug-monitor">
+                    调试监控、原始包与单通道分析
+                  </button>
+                </h2>
+                <div id="debug-monitor" class="accordion-collapse collapse" data-bs-parent="#debug-accordion">
+                  <div class="accordion-body">
+                    <div class="row g-3 align-items-end mb-3">
+                      <div class="col-sm-6 col-lg-3">
+                        <label class="form-label" for="log-level">日志级别</label>
+                        <select id="log-level" class="form-select">
+                          <option value="all">全部</option>
+                          <option value="info">信息</option>
+                          <option value="warning">警告</option>
+                          <option value="error">错误</option>
                         </select>
                       </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="int32-gain">增益</label>
-                        <input id="int32-gain" class="form-control" type="number" min="0.000001" step="any" value="1000000">
+                      <div class="col-auto">
+                        <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
                       </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="storage-network">网络码</label>
-                        <input id="storage-network" class="form-control" type="text">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="storage-station">台站码</label>
-                        <input id="storage-station" class="form-control" type="text">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="storage-location">位置码</label>
-                        <input id="storage-location" class="form-control" type="text">
-                      </div>
-                      <div class="col-12">
-                        <label class="form-label">通道码</label>
-                        <div class="table-responsive">
-                          <table class="table table-sm align-middle mb-0">
-                            <thead>
-                              <tr>
-                                <th scope="col" style="width: 120px;">通道</th>
-                                <th scope="col">通道码</th>
-                              </tr>
-                            </thead>
-                            <tbody id="storage-channel-codes-body"></tbody>
-                          </table>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-datalink">
-                    DataLink 远传
-                  </button>
-                </h2>
-                <div id="section-datalink" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
-                  <div class="accordion-body">
-                    <div class="form-check form-switch mb-3">
-                      <input id="datalink-enabled" class="form-check-input" type="checkbox">
-                      <label class="form-check-label" for="datalink-enabled">启用 DataLink 远传</label>
-                    </div>
-                    <div class="row g-3" id="datalink-fields">
-                      <div class="col-md-6">
-                        <label class="form-label" for="datalink-host">远传主机</label>
-                        <input id="datalink-host" class="form-control" type="text" placeholder="10.2.12.61">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="datalink-port">远传端口</label>
-                        <input id="datalink-port" class="form-control" type="number" min="1" max="65535">
-                      </div>
-                      <div class="col-12">
-                        <label class="form-label" for="datalink-stream-template">流模板</label>
-                        <input id="datalink-stream-template" class="form-control" type="text" placeholder="{network}_{station}_{location}_{channel}/MSEED">
-                      </div>
-                      <div class="col-md-6">
-                        <div class="form-check mt-4">
-                          <input id="ack-required" class="form-check-input" type="checkbox">
-                          <label class="form-check-label" for="ack-required">发送后等待 ACK</label>
-                        </div>
-                      </div>
-                      <div class="col-md-6">
-                        <div class="form-check mt-4">
-                          <input id="send-data2" class="form-check-input" type="checkbox">
-                          <label class="form-check-label" for="send-data2">同时发送降采样2</label>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-capture">
-                    抓包
-                  </button>
-                </h2>
-                <div id="section-capture" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
-                  <div class="accordion-body">
-                    <div class="form-check form-switch mb-3">
-                      <input id="capture-enabled" class="form-check-input" type="checkbox">
-                      <label class="form-check-label" for="capture-enabled">启用原始 TCP 抓包</label>
-                    </div>
-                    <div id="capture-fields">
-                      <label class="form-label" for="capture-path">抓包文件</label>
-                      <input id="capture-path" class="form-control" type="text" placeholder="./var/captures/session.dlhcap">
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#section-gnss">
-                    GNSS 时间
-                  </button>
-                </h2>
-                <div id="section-gnss" class="accordion-collapse collapse" data-bs-parent="#config-accordion">
-                  <div class="accordion-body">
-                    <div class="form-check form-switch mb-3">
-                      <input id="gnss-enabled" class="form-check-input" type="checkbox">
-                      <label class="form-check-label" for="gnss-enabled">启用 GNSS 时间</label>
-                    </div>
-                    <div class="row g-3" id="gnss-fields">
-                      <div class="col-md-6">
-                        <label class="form-label" for="gnss-port">串口</label>
-                        <input id="gnss-port" class="form-control" type="text" list="gnss-port-options">
-                        <datalist id="gnss-port-options"></datalist>
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="gnss-baudrate">波特率</label>
-                        <input id="gnss-baudrate" class="form-control" type="number" min="1">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="gnss-mode">模式</label>
-                        <select id="gnss-mode" class="form-select">
-                          <option value="debug">调试模式</option>
-                          <option value="deploy">部署模式</option>
+                      <div class="col-sm-6 col-lg-3">
+                        <label class="form-label" for="max-packets">最近打印包数</label>
+                        <select id="max-packets" class="form-select">
+                          <option value="10">10</option>
+                          <option value="20" selected>20</option>
+                          <option value="30">30</option>
+                          <option value="40">40</option>
                         </select>
                       </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="gnss-poll">轮询间隔(秒)</label>
-                        <input id="gnss-poll" class="form-control" type="number" min="0.01" step="0.01">
+                      <div class="col-auto">
+                        <button id="clear-packets-btn" class="btn btn-outline-secondary">清空原始包</button>
                       </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="gnss-timestamp-interval">授时等待超时(秒)</label>
-                        <input id="gnss-timestamp-interval" class="form-control" type="number" min="0.001" step="0.001">
+                    </div>
+                    <div class="row g-3">
+                      <div class="col-lg-6">
+                        <div class="debug-panel">
+                          <h3 class="h5">运行日志</h3>
+                          <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
+                        </div>
+                      </div>
+                      <div class="col-lg-6">
+                        <div class="debug-panel">
+                          <h3 class="h5">原始包</h3>
+                          <pre id="packets-console" class="console form-control bg-dark text-light">等待原始包...</pre>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="row g-3 align-items-end mt-3">
+                      <div class="col-sm-6 col-lg-3">
+                        <label class="form-label" for="analysis-channel">分析通道</label>
+                        <select id="analysis-channel" class="form-select"></select>
+                      </div>
+                      <div class="col-sm-6 col-lg-3">
+                        <label class="form-label" for="analysis-window">PSD 样本数</label>
+                        <select id="analysis-window" class="form-select">
+                          <option value="256">256</option>
+                          <option value="512">512</option>
+                          <option value="1024">1024</option>
+                          <option value="2048" selected>2048</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="row g-3 mt-1">
+                      <div class="col-lg-6">
+                        <div class="debug-panel">
+                          <h3 class="h5">时域波形</h3>
+                          <div class="chart-shell"><canvas id="analysis-time-chart"></canvas></div>
+                        </div>
+                      </div>
+                      <div class="col-lg-6">
+                        <div class="debug-panel">
+                          <h3 class="h5">PSD</h3>
+                          <div class="chart-shell"><canvas id="analysis-psd-chart"></canvas></div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-
             </div>
           </div>
         </div>
@@ -640,20 +946,29 @@
   <script src="./assets/bootstrap.bundle.min.js"></script>
   <script src="./assets/chart.umd.min.js"></script>
   <script>
+    const DISPLAY_CHANNEL_COUNT = 6;
+    const FTP_CONNECTION_TEXT = [
+      "IP: 10.2.16.214",
+      "端口: 21",
+      "用户名: Semi",
+      "密码: 空",
+    ].join("\n");
+
     const state = {
       baseUrl: "",
       connected: false,
       pollTimer: null,
       pollInFlight: false,
       refreshMs: 1000,
-      windowSeconds: 20,
+      windowSeconds: 10,
       maxPoints: 5000,
       maxPackets: 20,
       wavePayload: null,
       latestStatus: null,
+      latestConfig: null,
       lastLogsRefreshAt: 0,
       packetsClearedAt: 0,
-      waveChart: null,
+      waveCharts: [],
       analysisTimeChart: null,
       analysisPsdChart: null,
     };
@@ -667,34 +982,52 @@
       applyConfigBtn: document.getElementById("apply-config-btn"),
       startBtn: document.getElementById("start-btn"),
       stopBtn: document.getElementById("stop-btn"),
+      saveMainSettingsBtn: document.getElementById("save-main-settings-btn"),
+      copyDownloadInfoBtn: document.getElementById("copy-download-info-btn"),
       targetUrl: document.getElementById("target-url"),
       connectionAlert: document.getElementById("connection-alert"),
-      metricProcessing: document.getElementById("metric-processing"),
-      metricDataConnection: document.getElementById("metric-data-connection"),
-      metricPackets: document.getElementById("metric-packets"),
-      metricBytes: document.getElementById("metric-bytes"),
-      metricRate: document.getElementById("metric-rate"),
-      metricQueue: document.getElementById("metric-queue"),
-      metricDropped: document.getElementById("metric-dropped"),
-      metricStorageQueue: document.getElementById("metric-storage-queue"),
-      metricDatalink: document.getElementById("metric-datalink"),
-      metricDatalinkQueue: document.getElementById("metric-datalink-queue"),
-      metricGnss: document.getElementById("metric-gnss"),
-      metricGnssTime: document.getElementById("metric-gnss-time"),
-      overviewStatusList: document.getElementById("overview-status-list"),
-      overviewLastError: document.getElementById("overview-last-error"),
-      overviewStorageError: document.getElementById("overview-storage-error"),
-      overviewDatalinkError: document.getElementById("overview-datalink-error"),
-      overviewDatalinkPublishError: document.getElementById("overview-datalink-publish-error"),
+      basicDot: document.getElementById("basic-dot"),
+      gnssDot: document.getElementById("gnss-dot"),
+      diskDot: document.getElementById("disk-dot"),
+      transferDot: document.getElementById("transfer-dot"),
+      datalinkDot: document.getElementById("datalink-dot"),
+      statusDeviceIp: document.getElementById("status-device-ip"),
+      statusDevicePort: document.getElementById("status-device-port"),
+      statusFrameHeader: document.getElementById("status-frame-header"),
+      statusSourceRate: document.getElementById("status-source-rate"),
+      statusData1Rate: document.getElementById("status-data1-rate"),
+      statusData2Rate: document.getElementById("status-data2-rate"),
+      statusSatellite: document.getElementById("status-satellite"),
+      statusGnssTime: document.getElementById("status-gnss-time"),
+      statusGnss: document.getElementById("status-gnss"),
+      statusGnssPort: document.getElementById("status-gnss-port"),
+      statusGnssFallback: document.getElementById("status-gnss-fallback"),
+      statusDiskFree: document.getElementById("status-disk-free"),
+      statusDiskUsage: document.getElementById("status-disk-usage"),
+      statusStorage: document.getElementById("status-storage"),
+      statusStorageRoot: document.getElementById("status-storage-root"),
+      statusStorageError: document.getElementById("status-storage-error"),
+      statusTransferState: document.getElementById("status-transfer-state"),
+      statusDataConnection: document.getElementById("status-data-connection"),
+      statusPackets: document.getElementById("status-packets"),
+      statusBytes: document.getElementById("status-bytes"),
+      statusDropped: document.getElementById("status-dropped"),
+      statusDatalink: document.getElementById("status-datalink"),
+      statusDatalinkCount: document.getElementById("status-datalink-count"),
+      statusDatalinkBytes: document.getElementById("status-datalink-bytes"),
+      statusDatalinkReconnects: document.getElementById("status-datalink-reconnects"),
+      statusDatalinkError: document.getElementById("status-datalink-error"),
+      statusControl: document.getElementById("status-control"),
+      statusQueue: document.getElementById("status-queue"),
+      statusLastError: document.getElementById("status-last-error"),
       waveMode: document.getElementById("wave-mode"),
-      waveChannel: document.getElementById("wave-channel"),
       waveWindowSeconds: document.getElementById("wave-window-seconds"),
       refreshMs: document.getElementById("refresh-ms"),
-      maxPackets: document.getElementById("max-packets"),
       waveSummary: document.getElementById("wave-summary"),
       waveMeta: document.getElementById("wave-meta"),
       analysisChannel: document.getElementById("analysis-channel"),
       analysisWindow: document.getElementById("analysis-window"),
+      maxPackets: document.getElementById("max-packets"),
       logLevel: document.getElementById("log-level"),
       refreshLogsBtn: document.getElementById("refresh-logs-btn"),
       logsConsole: document.getElementById("logs-console"),
@@ -746,8 +1079,13 @@
     };
 
     function initCharts() {
-      state.waveChart = createLineChart(document.getElementById("wave-chart"), "#0d6efd");
-      state.analysisTimeChart = createLineChart(document.getElementById("analysis-time-chart"), "#198754");
+      const colors = ["#0d6efd", "#198754", "#dc3545", "#6f42c1", "#fd7e14", "#20c997"];
+      state.waveCharts = [];
+      for (let index = 0; index < DISPLAY_CHANNEL_COUNT; index += 1) {
+        const canvas = document.getElementById(`wave-chart-${index}`);
+        state.waveCharts[index] = createLineChart(canvas, colors[index], false);
+      }
+      state.analysisTimeChart = createLineChart(document.getElementById("analysis-time-chart"), "#198754", false);
       state.analysisPsdChart = createLineChart(document.getElementById("analysis-psd-chart"), "#dc3545", true);
     }
 
@@ -759,7 +1097,7 @@
             label: "",
             data: [],
             borderColor: color,
-            borderWidth: 1.5,
+            borderWidth: 1.4,
             pointRadius: 0,
             tension: 0,
           }],
@@ -774,12 +1112,21 @@
             x: {
               type: "linear",
               ticks: {
-                maxTicksLimit: 8,
+                maxTicksLimit: 5,
+              },
+              grid: {
+                color: "rgba(0,0,0,0.08)",
               },
             },
             y: {
               type: useLogScale ? "logarithmic" : "linear",
               grace: useLogScale ? 0 : "10%",
+              ticks: {
+                maxTicksLimit: 5,
+              },
+              grid: {
+                color: "rgba(0,0,0,0.08)",
+              },
             },
           },
           plugins: {
@@ -796,15 +1143,16 @@
       els.useCurrentOriginBtn.addEventListener("click", useCurrentOrigin);
       els.reloadConfigBtn.addEventListener("click", loadConfigIntoForm);
       els.applyConfigBtn.addEventListener("click", applyConfig);
+      els.saveMainSettingsBtn.addEventListener("click", applyConfig);
       els.startBtn.addEventListener("click", startProcessing);
       els.stopBtn.addEventListener("click", stopProcessing);
+      els.copyDownloadInfoBtn.addEventListener("click", copyDownloadInfo);
       els.refreshLogsBtn.addEventListener("click", () => refreshLogs(true));
       els.clearPacketsBtn.addEventListener("click", () => {
         state.packetsClearedAt = Date.now();
         els.packetsConsole.textContent = "原始包视图已清空，等待下一次刷新...";
       });
       els.waveMode.addEventListener("change", refreshMonitor);
-      els.waveChannel.addEventListener("change", renderChartsFromWavePayload);
       els.analysisChannel.addEventListener("change", renderChartsFromWavePayload);
       els.analysisWindow.addEventListener("change", renderChartsFromWavePayload);
       els.waveWindowSeconds.addEventListener("change", () => {
@@ -875,27 +1223,58 @@
       return `${numeric.toFixed(1)}%`;
     }
 
-    function formatMeters(value) {
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric) || numeric <= 0) {
+    function formatGnssTime(value) {
+      if (!value) {
         return "-";
       }
-      return `${numeric.toFixed(2)} m`;
+      const text = String(value).trim();
+      if (text.length >= 20 && /^\d+$/.test(text)) {
+        return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)} ${text.slice(8, 10)}:${text.slice(10, 12)}:${text.slice(12, 14)}.${text.slice(14, 20)}`;
+      }
+      return text;
+    }
+
+    function satelliteStatus(status) {
+      if (!status.gnss_enabled) {
+        return "未启用";
+      }
+      if (status.gnss_connected && !status.gnss_fallback_active) {
+        return "已锁定";
+      }
+      if (status.gnss_connected) {
+        return "授时回退";
+      }
+      return "未连接";
     }
 
     function setAlert(message, tone = "secondary") {
-      els.connectionAlert.className = `alert alert-${tone} py-2 px-3 mb-0 flex-grow-1`;
+      els.connectionAlert.className = "connection-status";
       els.connectionAlert.textContent = message;
+      els.connectionAlert.style.borderColor = {
+        success: "#80b37a",
+        info: "#80a8d8",
+        warning: "#d7b15a",
+        danger: "#d37a7a",
+        secondary: "#b4c7f1",
+      }[tone] || "#b4c7f1";
     }
 
     function setTargetUrl(url) {
       els.targetUrl.textContent = url || "未连接";
     }
 
+    function setDot(dot, tone) {
+      dot.classList.remove("ok", "warn", "bad");
+      if (tone) {
+        dot.classList.add(tone);
+      }
+    }
+
     function updateButtons() {
       const enabled = state.connected;
       els.reloadConfigBtn.disabled = !enabled;
       els.applyConfigBtn.disabled = !enabled;
+      els.saveMainSettingsBtn.disabled = !enabled;
       els.startBtn.disabled = !enabled || (state.latestStatus && state.latestStatus.processing_active);
       els.stopBtn.disabled = !enabled || !(state.latestStatus && state.latestStatus.processing_active);
     }
@@ -1027,6 +1406,7 @@
     }
 
     function applyConfigToForm(config) {
+      state.latestConfig = config;
       const processing = config.processing || {};
       const dataServer = config.data_server || {};
       const protocol = config.protocol || {};
@@ -1075,7 +1455,20 @@
       els.gnssMode.value = gnss.mode || "deploy";
       els.gnssPoll.value = gnss.poll_interval_seconds ?? 0.1;
       els.gnssTimestampInterval.value = gnss.packet_timestamp_timeout_seconds ?? gnss.timestamp_interval_seconds ?? 1.0;
+      updateConfigStatus(config);
       updateFormState();
+    }
+
+    function updateConfigStatus(config) {
+      const dataServer = config.data_server || {};
+      const protocol = config.protocol || {};
+      const storage = config.storage || {};
+      const activeHost = dataServer.mode === "client" ? dataServer.remote_host : dataServer.host;
+      const activePort = dataServer.mode === "client" ? dataServer.remote_port : dataServer.port;
+      els.statusDeviceIp.textContent = activeHost || "-";
+      els.statusDevicePort.textContent = activePort || "-";
+      els.statusFrameHeader.textContent = protocol.frame_header ?? "-";
+      els.statusStorageRoot.textContent = storage.root || "-";
     }
 
     async function refreshGnssPorts() {
@@ -1108,8 +1501,8 @@
     function collectConfigPayload() {
       return {
         processing: {
-          data1_rate: readNumber(els.data1Rate, "降采样1 采样率"),
-          data2_rate: readNumber(els.data2Rate, "降采样2 采样率"),
+          data1_rate: readNumber(els.data1Rate, "采样率"),
+          data2_rate: readNumber(els.data2Rate, "采样率2"),
         },
         data_server: {
           mode: els.dataMode.value,
@@ -1310,75 +1703,72 @@
 
     function updateStatus(status) {
       const processingActive = Boolean(status.processing_active);
-      els.metricProcessing.textContent = processingActive ? "运行中" : "已停止";
-      els.metricDataConnection.textContent = status.data_connected ? "数据连接 已建立" : "数据连接 未建立";
-      els.metricPackets.textContent = formatNumber(status.packets_received);
-      els.metricBytes.textContent = formatNumber(status.bytes_received);
-      els.metricRate.textContent = formatRate(status.source_sample_rate);
-      els.metricQueue.textContent = formatNumber(status.queue_depth);
-      els.metricDropped.textContent = formatNumber(status.frames_dropped);
-      els.metricStorageQueue.textContent = formatNumber(status.storage_queue_depth);
-      els.metricDatalink.textContent = status.datalink_connected ? "已连接" : (status.datalink_enabled ? "未连接" : "未启用");
-      els.metricDatalinkQueue.textContent = formatNumber(status.datalink_publish_queue_depth);
-      els.metricGnss.textContent = status.gnss_connected ? "已连接" : (status.gnss_enabled ? "未连接" : "未启用");
-      els.metricGnssTime.textContent = `时间 ${status.gnss_last_timestamp || "-"}`;
+      const dataConnected = Boolean(status.data_connected);
+      const datalinkConnected = Boolean(status.datalink_connected);
+      const diskUsage = Number(status.storage_disk_usage_percent);
+      els.statusSourceRate.textContent = formatRate(status.source_sample_rate);
+      els.statusData1Rate.textContent = formatRate(status.data1_rate);
+      els.statusData2Rate.textContent = formatRate(status.data2_rate);
+      els.statusSatellite.textContent = satelliteStatus(status);
+      els.statusGnssTime.textContent = formatGnssTime(status.gnss_last_timestamp);
+      els.statusGnss.textContent = status.gnss_connected ? "已连接" : (status.gnss_enabled ? "未连接" : "未启用");
+      els.statusGnssPort.textContent = status.gnss_port || "-";
+      els.statusGnssFallback.textContent = status.gnss_fallback_active ? "是" : "否";
+      els.statusDiskFree.textContent = formatBytes(status.storage_disk_free_bytes);
+      els.statusDiskUsage.textContent = formatPercent(status.storage_disk_usage_percent);
+      els.statusStorage.textContent = status.storage_enabled ? "已启用" : "未启用";
+      els.statusStorageError.textContent = status.storage_last_error || "-";
+      els.statusTransferState.textContent = processingActive ? "运行中" : "已停止";
+      els.statusDataConnection.textContent = dataConnected ? "已连接" : "未连接";
+      els.statusPackets.textContent = formatNumber(status.packets_received);
+      els.statusBytes.textContent = formatBytes(status.bytes_received);
+      els.statusDropped.textContent = formatNumber(status.frames_dropped);
+      els.statusDatalink.textContent = datalinkConnected ? "已连接" : (status.datalink_enabled ? "未连接" : "未启用");
+      els.statusDatalinkCount.textContent = formatNumber(status.datalink_packets_sent);
+      els.statusDatalinkBytes.textContent = formatBytes(status.datalink_bytes_sent);
+      els.statusDatalinkReconnects.textContent = formatNumber(status.datalink_reconnects);
+      els.statusDatalinkError.textContent = status.datalink_last_error || status.datalink_publish_last_error || "-";
+      els.statusControl.textContent = status.control_connected ? "已连接" : "未连接";
+      els.statusQueue.textContent = formatNumber(status.queue_depth);
+      els.statusLastError.textContent = status.last_error || "-";
 
-      renderOverviewStatus(status);
-      els.overviewLastError.textContent = status.last_error || "-";
-      els.overviewStorageError.textContent = status.storage_last_error || "-";
-      els.overviewDatalinkError.textContent = status.datalink_last_error || "-";
-      els.overviewDatalinkPublishError.textContent = status.datalink_publish_last_error || "-";
-    }
+      setDot(els.basicDot, dataConnected ? "ok" : (processingActive ? "warn" : ""));
+      setDot(els.transferDot, dataConnected ? "ok" : (processingActive ? "warn" : ""));
+      setDot(els.datalinkDot, datalinkConnected ? "ok" : (status.datalink_enabled ? "bad" : ""));
+      setDot(els.gnssDot, status.gnss_connected && !status.gnss_fallback_active ? "ok" : (status.gnss_enabled ? "warn" : ""));
+      setDot(els.diskDot, !status.storage_enabled ? "" : (diskUsage >= 90 ? "bad" : (diskUsage >= 75 ? "warn" : "ok")));
 
-    function renderOverviewStatus(status) {
-      const rows = [
-        ["控制连接", status.control_connected ? "已连接" : "未连接"],
-        ["基线长度", formatMeters(status.baseline_length_meters)],
-        ["降采样1 采样率", formatRate(status.data1_rate)],
-        ["降采样2 采样率", formatRate(status.data2_rate)],
-        ["本地存储", status.storage_enabled ? "已启用" : "未启用"],
-        ["磁盘总容量", formatBytes(status.storage_disk_total_bytes)],
-        ["磁盘利用率", formatPercent(status.storage_disk_usage_percent)],
-        ["磁盘可用", formatBytes(status.storage_disk_free_bytes)],
-        ["存储丢帧", formatNumber(status.storage_frames_dropped)],
-        ["远传开关", status.datalink_enabled ? "已启用" : "未启用"],
-        ["远传重连次数", formatNumber(status.datalink_reconnects)],
-        ["远传发布丢帧", formatNumber(status.datalink_publish_frames_dropped)],
-        ["抓包", status.capture_enabled ? "已启用" : "未启用"],
-        ["GNSS 模式", status.gnss_mode || "-"],
-        ["GNSS 串口", status.gnss_port || "-"],
-        ["GNSS 回退", status.gnss_fallback_active ? "是" : "否"],
-      ];
-      els.overviewStatusList.innerHTML = rows.map(([label, value]) => (
-        `<div class="list-group-item d-flex justify-content-between align-items-center">
-          <span class="text-secondary">${label}</span>
-          <span class="fw-semibold">${value}</span>
-        </div>`
-      )).join("");
+      if (state.latestConfig) {
+        updateConfigStatus(state.latestConfig);
+      }
     }
 
     function renderWavePayload(payload) {
       const waveform = payload.waveform || null;
       state.wavePayload = payload;
-      populateChannelOptions(payload.channel_codes || [], waveform ? waveform.channels : 0);
+      populateAnalysisChannelOptions(payload.channel_codes || [], waveform ? waveform.channels : 0);
+      populateWaveLabels(payload.channel_codes || []);
       renderChartsFromWavePayload();
       renderPackets(payload.recent_packets || []);
     }
 
-    function populateChannelOptions(channelCodes, channelCount) {
+    function populateWaveLabels(channelCodes) {
+      for (let index = 0; index < DISPLAY_CHANNEL_COUNT; index += 1) {
+        const label = document.getElementById(`wave-label-${index}`);
+        label.textContent = channelCodes[index] || "";
+      }
+    }
+
+    function populateAnalysisChannelOptions(channelCodes, channelCount) {
       const count = Number(channelCount) || channelCodes.length || 0;
-      const previousWave = els.waveChannel.value;
       const previousAnalysis = els.analysisChannel.value;
       const options = [];
       for (let index = 0; index < count; index += 1) {
         const label = channelCodes[index] ? `${index + 1} / ${channelCodes[index]}` : String(index + 1);
         options.push(`<option value="${index}">${label}</option>`);
       }
-      const html = options.join("");
-      els.waveChannel.innerHTML = html;
-      els.analysisChannel.innerHTML = html;
+      els.analysisChannel.innerHTML = options.join("");
       if (count > 0) {
-        els.waveChannel.value = previousWave && Number(previousWave) < count ? previousWave : "0";
         els.analysisChannel.value = previousAnalysis && Number(previousAnalysis) < count ? previousAnalysis : "0";
       }
     }
@@ -1386,7 +1776,7 @@
     function renderChartsFromWavePayload() {
       const payload = state.wavePayload;
       if (!payload || !payload.waveform) {
-        updateChart(state.waveChart, [], "等待数据");
+        state.waveCharts.forEach((chart, index) => updateChart(chart, [], `CH${index + 1}`));
         updateChart(state.analysisTimeChart, [], "等待数据");
         updateChart(state.analysisPsdChart, [], "等待数据");
         els.waveSummary.textContent = "等待波形数据...";
@@ -1395,22 +1785,24 @@
       }
 
       const waveform = payload.waveform;
-      const selectedWaveChannel = Number(els.waveChannel.value || "0");
-      const selectedAnalysisChannel = Number(els.analysisChannel.value || "0");
-      const waveSeries = Array.isArray(waveform.series[selectedWaveChannel]) ? waveform.series[selectedWaveChannel] : [];
-      const analysisSeries = Array.isArray(waveform.series[selectedAnalysisChannel]) ? waveform.series[selectedAnalysisChannel] : [];
       const sampleRate = Number(waveform.sample_rate) || 0;
+      for (let index = 0; index < DISPLAY_CHANNEL_COUNT; index += 1) {
+        const series = Array.isArray(waveform.series[index]) ? waveform.series[index] : [];
+        updateChart(
+          state.waveCharts[index],
+          seriesToTimePoints(series, sampleRate),
+          `CH${index + 1}`
+        );
+      }
 
-      updateChart(
-        state.waveChart,
-        seriesToTimePoints(waveSeries, sampleRate),
-        `CH ${selectedWaveChannel + 1}`
-      );
-      els.waveSummary.textContent = waveSeries.length
-        ? `当前显示最近 ${formatWindowSeconds(waveform, waveSeries, sampleRate)}，共 ${waveSeries.length} 个点，来源 ${waveform.mode}。`
+      const firstSeries = Array.isArray(waveform.series[0]) ? waveform.series[0] : [];
+      els.waveSummary.textContent = firstSeries.length
+        ? `当前同时显示 CH1 至 CH${DISPLAY_CHANNEL_COUNT}，最近 ${formatWindowSeconds(waveform, firstSeries, sampleRate)}，来源 ${waveform.mode}。`
         : "当前模式下还没有可绘制的点。";
-      els.waveMeta.textContent = `sampleRate ${formatRate(sampleRate)} / channels ${waveform.channels} / updated ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
+      els.waveMeta.textContent = `采样率 ${formatRate(sampleRate)} / 通道 ${waveform.channels} / 更新 ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
 
+      const selectedAnalysisChannel = Number(els.analysisChannel.value || "0");
+      const analysisSeries = Array.isArray(waveform.series[selectedAnalysisChannel]) ? waveform.series[selectedAnalysisChannel] : [];
       const analysisWindow = Math.min(Number(els.analysisWindow.value || "2048"), analysisSeries.length);
       const windowed = analysisSeries.slice(Math.max(analysisSeries.length - analysisWindow, 0));
       updateChart(
@@ -1427,6 +1819,9 @@
     }
 
     function updateChart(chart, data, label) {
+      if (!chart) {
+        return;
+      }
       chart.data.datasets[0].label = label;
       chart.data.datasets[0].data = data;
       chart.update("none");
@@ -1491,6 +1886,13 @@
         ];
         return lines.join("\n");
       }).join("\n\n" + "-".repeat(96) + "\n\n");
+    }
+
+    function copyDownloadInfo() {
+      navigator.clipboard.writeText(FTP_CONNECTION_TEXT).then(
+        () => setAlert("FTP 连接信息已复制。", "success"),
+        () => setAlert("复制失败，请手动选择下载页中的连接信息。", "warning")
+      );
     }
 
     document.addEventListener("DOMContentLoaded", async () => {
