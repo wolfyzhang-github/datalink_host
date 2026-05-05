@@ -208,7 +208,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_styles()
         self._configure_window_geometry()
         self._load_runtime_config_into_form()
-        self._refresh_gnss_ports()
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -225,7 +224,6 @@ class MainWindow(QtWidgets.QMainWindow):
         shell_layout.setContentsMargins(18, 18, 18, 18)
         shell_layout.setSpacing(16)
         shell_layout.addWidget(self._build_header_banner())
-        shell_layout.addWidget(self._build_control_strip())
 
         tabs = QtWidgets.QTabWidget(shell)
         tabs.setDocumentMode(True)
@@ -305,6 +303,12 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
+        actions = QtWidgets.QHBoxLayout()
+        actions.addStretch(1)
+        apply_button = QtWidgets.QPushButton("应用配置", container)
+        apply_button.clicked.connect(self._apply_runtime_config)
+        actions.addWidget(apply_button)
+        layout.addLayout(actions)
         layout.addStretch(1)
 
         scroll.setWidget(container)
@@ -359,13 +363,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(self._build_page_intro("维护工具", "保留 GNSS 和日志，其余调试项已收起。"))
-
-        content = QtWidgets.QHBoxLayout()
-        content.setSpacing(16)
-        content.addWidget(self._build_gnss_panel(), stretch=3)
-        content.addWidget(self._build_status_tab(), stretch=5)
-        layout.addLayout(content)
+        layout.addWidget(self._build_page_intro("维护工具", "只保留日志。"))
+        layout.addWidget(self._build_status_tab(), stretch=1)
         return widget
 
     def _build_advanced_settings_tab(self) -> QtWidgets.QWidget:
@@ -1048,14 +1047,10 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
-        assert self._gnss_enabled_checkbox is not None
-        assert self._gnss_port_combo is not None
-        assert self._gnss_baudrate_spin is not None
 
         processing = config["processing"]
         storage = config["storage"]
         datalink = config["datalink"]
-        gnss = config["gnss"]
 
         self._data1_rate_spin.setValue(processing["data1_rate"])
         self._data2_rate_spin.setValue(processing["data2_rate"])
@@ -1068,13 +1063,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._datalink_enabled_checkbox.setChecked(datalink["enabled"])
         self._datalink_host_edit.setText(datalink["host"])
         self._datalink_port_spin.setValue(datalink["port"])
-
-        self._gnss_enabled_checkbox.setChecked(gnss["enabled"])
-        self._gnss_baudrate_spin.setValue(gnss["baudrate"])
-        self._refresh_gnss_ports(selected=gnss["port"])
         self._update_form_state()
         self._sync_mode_selectors()
-        self._set_feedback("表单已同步到当前运行时配置。")
 
     def _set_mode(self, name: str, checked: bool = True) -> None:
         if not checked:
@@ -1120,21 +1110,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if filename:
             self._capture_path_edit.setText(filename)
 
-    def _refresh_gnss_ports(self, selected: str | None = None) -> None:
-        if self._gnss_port_combo is None:
-            return
-        current = (selected if selected is not None else self._gnss_port_combo.currentText()).strip()
-        ports = self._runtime.gnss_ports()
-        self._gnss_port_combo.blockSignals(True)
-        self._gnss_port_combo.clear()
-        for port in ports:
-            self._gnss_port_combo.addItem(port)
-        if current:
-            if current not in ports:
-                self._gnss_port_combo.addItem(current)
-            self._gnss_port_combo.setCurrentText(current)
-        self._gnss_port_combo.blockSignals(False)
-
     def _update_form_state(self) -> None:
         if self._storage_enabled_checkbox is not None:
             self._set_section_enabled(
@@ -1154,14 +1129,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._datalink_port_spin,
                 ],
             )
-        self._set_section_enabled(
-            self._gnss_enabled_checkbox.isChecked() if self._gnss_enabled_checkbox is not None else False,
-            [
-                self._gnss_port_combo,
-                self._gnss_refresh_button,
-                self._gnss_baudrate_spin,
-            ],
-        )
         self._update_processing_controls()
 
     @staticmethod
@@ -1200,9 +1167,6 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
-        assert self._gnss_enabled_checkbox is not None
-        assert self._gnss_port_combo is not None
-        assert self._gnss_baudrate_spin is not None
 
         payload = {
             "processing": {
@@ -1220,11 +1184,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 "host": self._datalink_host_edit.text().strip() or "10.2.12.61",
                 "port": self._datalink_port_spin.value(),
             },
-            "gnss": {
-                "enabled": self._gnss_enabled_checkbox.isChecked(),
-                "port": self._gnss_port_combo.currentText().strip(),
-                "baudrate": self._gnss_baudrate_spin.value(),
-            },
         }
         try:
             self._runtime.update_config(payload)
@@ -1234,16 +1193,6 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._set_feedback(f"应用失败: {exc}", is_error=True)
             QtWidgets.QMessageBox.critical(self, "应用配置失败", str(exc))
-
-    def _start_processing(self) -> None:
-        self._runtime.resume_processing()
-        self._update_processing_controls()
-        self.statusBar().showMessage("数据接收已启动", 3000)
-
-    def _pause_processing(self) -> None:
-        self._runtime.pause_processing()
-        self._update_processing_controls()
-        self.statusBar().showMessage("数据接收已停止", 3000)
 
     def _set_feedback(self, text: str, *, is_error: bool = False) -> None:
         if self._config_feedback_label is None:

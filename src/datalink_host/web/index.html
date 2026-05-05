@@ -62,42 +62,6 @@
       height: 70px;
     }
 
-    .connection-strip {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px 14px;
-      align-items: end;
-      padding: 12px 20px;
-      border-bottom: 1px solid #d7e2ff;
-      background: #fbfdff;
-    }
-
-    .connection-strip .form-control {
-      min-width: 150px;
-    }
-
-    .connection-status {
-      flex: 1 1 300px;
-      min-height: 38px;
-      display: flex;
-      align-items: center;
-      padding: 6px 10px;
-      border: 1px solid #b4c7f1;
-      background: #ffffff;
-      color: var(--muted);
-    }
-
-    .target-chip {
-      min-height: 38px;
-      display: flex;
-      align-items: center;
-      padding: 6px 10px;
-      border: 1px solid #b4c7f1;
-      background: #eef4ff;
-      color: #1c3d76;
-      white-space: nowrap;
-    }
-
     .nav-shell {
       padding: 14px 20px 0 20px;
       background: #ffffff;
@@ -380,25 +344,6 @@
       </svg>
     </header>
 
-    <section class="connection-strip">
-      <div>
-        <label class="form-label mb-1" for="api-host">API 地址</label>
-        <input id="api-host" class="form-control form-control-sm" type="text" placeholder="127.0.0.1">
-      </div>
-      <div>
-        <label class="form-label mb-1" for="api-port">端口</label>
-        <input id="api-port" class="form-control form-control-sm" type="number" min="1" max="65535" placeholder="18080">
-      </div>
-      <button id="connect-btn" class="btn btn-primary btn-sm">连接</button>
-      <button id="use-current-origin-btn" class="btn btn-outline-secondary btn-sm">使用当前地址</button>
-      <button id="reload-config-btn" class="btn btn-outline-secondary btn-sm" disabled>重载配置</button>
-      <button id="apply-config-btn" class="btn btn-success btn-sm" disabled>应用配置</button>
-      <button id="start-btn" class="btn btn-outline-primary btn-sm" disabled>启动接收</button>
-      <button id="stop-btn" class="btn btn-outline-danger btn-sm" disabled>停止接收</button>
-      <div class="target-chip">目标: <span id="target-url" class="ms-1">未连接</span></div>
-      <div id="connection-alert" class="connection-status">尚未连接远程服务。</div>
-    </section>
-
     <div class="nav-shell">
       <ul class="nav nav-tabs main-tabs" id="main-tab" role="tablist">
         <li class="nav-item" role="presentation">
@@ -481,8 +426,9 @@
                 </div>
               </div>
               <div class="settings-actions">
-                <button id="save-main-settings-btn" class="btn btn-success" disabled>应用参数设置</button>
+                <button id="save-main-settings-btn" class="btn btn-success">应用参数设置</button>
               </div>
+              <div id="settings-feedback" class="muted mt-3"></div>
             </section>
 
             <section class="settings-panel">
@@ -620,44 +566,23 @@
         <div class="page-panel">
           <div class="debug-layout">
             <section class="debug-panel">
-              <div class="row g-3">
-                <div class="col-md-6">
-                  <div class="form-check form-switch mb-3">
-                    <input id="gnss-enabled" class="form-check-input" type="checkbox">
-                    <label class="form-check-label" for="gnss-enabled">启用 GNSS 时间</label>
-                  </div>
-                  <div class="row g-3" id="gnss-fields">
-                    <div class="col-12">
-                      <label class="form-label" for="gnss-port">串口</label>
-                      <input id="gnss-port" class="form-control" type="text" list="gnss-port-options">
-                      <datalist id="gnss-port-options"></datalist>
-                    </div>
-                    <div class="col-md-6">
-                      <label class="form-label" for="gnss-baudrate">波特率</label>
-                      <input id="gnss-baudrate" class="form-control" type="number" min="1">
-                    </div>
-                  </div>
+              <div class="row g-3 align-items-end">
+                <div class="col-sm-6 col-lg-5">
+                  <label class="form-label" for="log-level">日志级别</label>
+                  <select id="log-level" class="form-select">
+                    <option value="all">全部</option>
+                    <option value="info">信息</option>
+                    <option value="warning">警告</option>
+                    <option value="error">错误</option>
+                  </select>
                 </div>
-                <div class="col-md-6">
-                  <div class="row g-3 align-items-end">
-                    <div class="col-sm-6 col-lg-5">
-                      <label class="form-label" for="log-level">日志级别</label>
-                      <select id="log-level" class="form-select">
-                        <option value="all">全部</option>
-                        <option value="info">信息</option>
-                        <option value="warning">警告</option>
-                        <option value="error">错误</option>
-                      </select>
-                    </div>
-                    <div class="col-auto">
-                      <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
-                    </div>
-                  </div>
-                  <div class="debug-panel mt-3">
-                    <h3 class="h5">运行日志</h3>
-                    <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
-                  </div>
+                <div class="col-auto">
+                  <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
                 </div>
+              </div>
+              <div class="debug-panel mt-3">
+                <h3 class="h5">运行日志</h3>
+                <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
               </div>
             </section>
           </div>
@@ -679,7 +604,6 @@
 
     const state = {
       baseUrl: "",
-      connected: false,
       pollTimer: null,
       pollInFlight: false,
       refreshMs: 1000,
@@ -693,18 +617,9 @@
     };
 
     const els = {
-      apiHost: document.getElementById("api-host"),
-      apiPort: document.getElementById("api-port"),
-      connectBtn: document.getElementById("connect-btn"),
-      useCurrentOriginBtn: document.getElementById("use-current-origin-btn"),
-      reloadConfigBtn: document.getElementById("reload-config-btn"),
-      applyConfigBtn: document.getElementById("apply-config-btn"),
-      startBtn: document.getElementById("start-btn"),
-      stopBtn: document.getElementById("stop-btn"),
       saveMainSettingsBtn: document.getElementById("save-main-settings-btn"),
       copyDownloadInfoBtn: document.getElementById("copy-download-info-btn"),
-      targetUrl: document.getElementById("target-url"),
-      connectionAlert: document.getElementById("connection-alert"),
+      settingsFeedback: document.getElementById("settings-feedback"),
       basicDot: document.getElementById("basic-dot"),
       gnssDot: document.getElementById("gnss-dot"),
       diskDot: document.getElementById("disk-dot"),
@@ -739,11 +654,6 @@
       datalinkFields: document.getElementById("datalink-fields"),
       datalinkHost: document.getElementById("datalink-host"),
       datalinkPort: document.getElementById("datalink-port"),
-      gnssEnabled: document.getElementById("gnss-enabled"),
-      gnssFields: document.getElementById("gnss-fields"),
-      gnssPort: document.getElementById("gnss-port"),
-      gnssPortOptions: document.getElementById("gnss-port-options"),
-      gnssBaudrate: document.getElementById("gnss-baudrate"),
     };
 
     function initCharts() {
@@ -807,13 +717,7 @@
     }
 
     function bindEvents() {
-      els.connectBtn.addEventListener("click", connectToRemote);
-      els.useCurrentOriginBtn.addEventListener("click", useCurrentOrigin);
-      els.reloadConfigBtn.addEventListener("click", loadConfigIntoForm);
-      els.applyConfigBtn.addEventListener("click", applyConfig);
       els.saveMainSettingsBtn.addEventListener("click", applyConfig);
-      els.startBtn.addEventListener("click", startProcessing);
-      els.stopBtn.addEventListener("click", stopProcessing);
       els.copyDownloadInfoBtn.addEventListener("click", copyDownloadInfo);
       els.refreshLogsBtn.addEventListener("click", () => refreshLogs(true));
       els.waveMode.addEventListener("change", refreshMonitor);
@@ -835,7 +739,6 @@
       els.logLevel.addEventListener("change", () => refreshLogs(true));
       els.storageEnabled.addEventListener("change", updateFormState);
       els.datalinkEnabled.addEventListener("change", updateFormState);
-      els.gnssEnabled.addEventListener("change", updateFormState);
     }
 
     function formatNumber(value) {
@@ -911,19 +814,16 @@
     }
 
     function setAlert(message, tone = "secondary") {
-      els.connectionAlert.className = "connection-status";
-      els.connectionAlert.textContent = message;
-      els.connectionAlert.style.borderColor = {
-        success: "#80b37a",
-        info: "#80a8d8",
-        warning: "#d7b15a",
-        danger: "#d37a7a",
-        secondary: "#b4c7f1",
-      }[tone] || "#b4c7f1";
-    }
-
-    function setTargetUrl(url) {
-      els.targetUrl.textContent = url || "未连接";
+      if (els.settingsFeedback) {
+        els.settingsFeedback.textContent = message;
+        els.settingsFeedback.style.color = {
+          success: "#1f7a1f",
+          info: "#1d4ed8",
+          warning: "#a16207",
+          danger: "#b3261e",
+          secondary: "",
+        }[tone] || "";
+      }
     }
 
     function setDot(dot, tone) {
@@ -934,46 +834,32 @@
     }
 
     function updateButtons() {
-      const enabled = state.connected;
-      els.reloadConfigBtn.disabled = !enabled;
-      els.applyConfigBtn.disabled = !enabled;
-      els.saveMainSettingsBtn.disabled = !enabled;
-      els.startBtn.disabled = !enabled || (state.latestStatus && state.latestStatus.processing_active);
-      els.stopBtn.disabled = !enabled || !(state.latestStatus && state.latestStatus.processing_active);
+      els.saveMainSettingsBtn.disabled = false;
     }
 
-    function buildBaseUrl() {
-      const host = els.apiHost.value.trim();
-      const port = els.apiPort.value.trim();
-      if (!host) {
-        throw new Error("API 地址不能为空");
-      }
-      if (!port) {
-        throw new Error("端口不能为空");
-      }
-      return `http://${host}:${port}`;
-    }
-
-    function saveConnectionPreset() {
-      localStorage.setItem("datalink-host-api-host", els.apiHost.value.trim());
-      localStorage.setItem("datalink-host-api-port", els.apiPort.value.trim());
-    }
-
-    function loadConnectionPreset() {
-      const storedHost = localStorage.getItem("datalink-host-api-host");
-      const storedPort = localStorage.getItem("datalink-host-api-port");
+    function getDefaultBaseUrl() {
       const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
-      els.apiHost.value = storedHost || (hasHttpOrigin ? window.location.hostname : "127.0.0.1");
-      els.apiPort.value = storedPort || (window.location.port || "18080");
-      if (hasHttpOrigin) {
-        setTargetUrl(window.location.origin);
+      if (hasHttpOrigin && window.location.origin) {
+        return window.location.origin;
+      }
+      return "http://127.0.0.1:18080";
+    }
+
+    function restartPolling() {
+      stopPolling();
+      state.pollTimer = window.setInterval(() => {
+        refreshMonitor();
+      }, state.refreshMs);
+    }
+
+    function stopPolling() {
+      if (state.pollTimer) {
+        window.clearInterval(state.pollTimer);
+        state.pollTimer = null;
       }
     }
 
     async function apiRequest(path, options = {}) {
-      if (!state.baseUrl) {
-        throw new Error("还没有连接远程 API");
-      }
       const response = await fetch(`${state.baseUrl}${path}`, {
         headers: {
           "Content-Type": "application/json",
@@ -1008,7 +894,6 @@
     function updateFormState() {
       toggleFieldGroup(els.storageFields, Boolean(els.storageEnabled.checked));
       toggleFieldGroup(els.datalinkFields, Boolean(els.datalinkEnabled.checked));
-      toggleFieldGroup(els.gnssFields, els.gnssEnabled.checked);
     }
 
     function toggleFieldGroup(container, enabled) {
@@ -1023,7 +908,6 @@
       const processing = config.processing || {};
       const storage = config.storage || {};
       const datalink = config.datalink || {};
-      const gnss = config.gnss || {};
 
       els.data1Rate.value = processing.data1_rate ?? 100;
       els.data2Rate.value = processing.data2_rate ?? 10;
@@ -1034,9 +918,6 @@
       els.datalinkEnabled.checked = Boolean(datalink.enabled);
       els.datalinkHost.value = datalink.host || "";
       els.datalinkPort.value = datalink.port ?? "";
-      els.gnssEnabled.checked = Boolean(gnss.enabled);
-      els.gnssPort.value = gnss.port || "";
-      els.gnssBaudrate.value = gnss.baudrate ?? 115200;
       updateConfigStatus(config);
       updateFormState();
     }
@@ -1047,31 +928,10 @@
       els.statusDevicePort.textContent = "18080";
     }
 
-    async function refreshGnssPorts() {
-      if (!state.baseUrl) {
-        return;
-      }
-      try {
-        const ports = await apiRequest("/api/gnss/ports");
-        els.gnssPortOptions.innerHTML = "";
-        ports.forEach((port) => {
-          const option = document.createElement("option");
-          option.value = port;
-          els.gnssPortOptions.appendChild(option);
-        });
-      } catch (error) {
-        console.warn("Failed to refresh GNSS ports", error);
-      }
-    }
-
     async function loadConfigIntoForm() {
-      if (!state.baseUrl) {
-        return;
-      }
       const config = await apiRequest("/api/config");
       applyConfigToForm(config);
-      await refreshGnssPorts();
-      setAlert("配置已从远程服务同步到当前页面。", "info");
+      setAlert("配置已从服务同步到当前页面。", "info");
     }
 
     function collectConfigPayload() {
@@ -1091,24 +951,16 @@
           host: els.datalinkHost.value.trim() || "10.2.12.61",
           port: readNumber(els.datalinkPort, "远程传输端口"),
         },
-        gnss: {
-          enabled: els.gnssEnabled.checked,
-          port: els.gnssPort.value.trim(),
-          baudrate: readNumber(els.gnssBaudrate, "GNSS 波特率"),
-        },
       };
     }
 
     async function applyConfig() {
-      if (!state.connected) {
-        return;
-      }
       try {
         await apiRequest("/api/config", {
           method: "POST",
           body: JSON.stringify(collectConfigPayload()),
         });
-        setAlert("配置已应用到远程服务。", "success");
+        setAlert("配置已应用。", "success");
         await loadConfigIntoForm();
         await refreshMonitor();
       } catch (error) {
@@ -1116,92 +968,8 @@
       }
     }
 
-    async function startProcessing() {
-      if (!state.connected) {
-        return;
-      }
-      try {
-        await apiRequest("/api/processing/start", { method: "POST" });
-        setAlert("已请求远程服务启动接收。", "success");
-        await refreshMonitor();
-      } catch (error) {
-        setAlert(`启动失败: ${error.message}`, "danger");
-      }
-    }
-
-    async function stopProcessing() {
-      if (!state.connected) {
-        return;
-      }
-      try {
-        await apiRequest("/api/processing/stop", { method: "POST" });
-        setAlert("已请求远程服务停止接收。", "warning");
-        await refreshMonitor();
-      } catch (error) {
-        setAlert(`停止失败: ${error.message}`, "danger");
-      }
-    }
-
-    function setConnected(connected, message, tone) {
-      state.connected = connected;
-      setAlert(message, tone);
-      updateButtons();
-      if (!connected) {
-        stopPolling();
-      }
-    }
-
-    async function connectToRemote() {
-      try {
-        state.baseUrl = buildBaseUrl();
-      } catch (error) {
-        setAlert(error.message, "danger");
-        return;
-      }
-      saveConnectionPreset();
-      setTargetUrl(state.baseUrl);
-      setAlert("正在连接远程 API...", "secondary");
-      try {
-        await loadConfigIntoForm();
-        await refreshMonitor(true);
-        await refreshLogs(true);
-        setConnected(true, "远程 API 连接成功，已开始轮询。", "success");
-        restartPolling();
-      } catch (error) {
-        setConnected(false, `连接失败: ${error.message}`, "danger");
-      }
-    }
-
-    function useCurrentOrigin() {
-      const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
-      if (!hasHttpOrigin || !window.location.hostname || !window.location.port) {
-        setAlert("当前页面不是通过带端口的 HTTP 地址打开，无法直接复用当前地址。", "warning");
-        return;
-      }
-      els.apiHost.value = window.location.hostname;
-      els.apiPort.value = window.location.port;
-      connectToRemote();
-    }
-
-    function restartPolling() {
-      stopPolling();
-      if (!state.connected) {
-        return;
-      }
-      state.pollTimer = window.setInterval(() => {
-        refreshMonitor();
-      }, state.refreshMs);
-    }
-
-    function stopPolling() {
-      if (state.pollTimer) {
-        window.clearInterval(state.pollTimer);
-        state.pollTimer = null;
-      }
-    }
-
     async function refreshMonitor(force = false) {
-      if ((!state.connected && !force) || state.pollInFlight || !state.baseUrl) {
+      if (state.pollInFlight) {
         return;
       }
       state.pollInFlight = true;
@@ -1220,16 +988,13 @@
         }
         updateButtons();
       } catch (error) {
-        setConnected(false, `监控刷新失败: ${error.message}`, "danger");
+        setAlert(`监控刷新失败: ${error.message}`, "danger");
       } finally {
         state.pollInFlight = false;
       }
     }
 
     async function refreshLogs(force = false) {
-      if (!state.baseUrl) {
-        return;
-      }
       if (!force && Date.now() - state.lastLogsRefreshAt < 1000) {
         return;
       }
@@ -1338,16 +1103,18 @@
     document.addEventListener("DOMContentLoaded", async () => {
       initCharts();
       bindEvents();
-      loadConnectionPreset();
+      state.baseUrl = getDefaultBaseUrl();
       state.refreshMs = Number(els.refreshMs.value);
       state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 20);
       els.waveWindowSeconds.value = String(state.windowSeconds);
       updateFormState();
-      const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
-      if (hasHttpOrigin && window.location.port) {
-        els.apiHost.value = window.location.hostname;
-        els.apiPort.value = window.location.port;
-        await connectToRemote();
+      try {
+        await loadConfigIntoForm();
+        await refreshMonitor(true);
+        await refreshLogs(true);
+        restartPolling();
+      } catch (error) {
+        setAlert(`页面初始化失败: ${error.message}`, "danger");
       }
     });
   </script>
