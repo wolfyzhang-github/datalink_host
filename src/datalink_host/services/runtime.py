@@ -39,6 +39,7 @@ from datalink_host.transport.datalink import DataLinkPublisher
 LOGGER = logging.getLogger(__name__)
 QUEUE_BACKLOG_WARNING_DEPTH = 8
 FRAME_QUEUE_WAIT_WARNING_MS = 200.0
+FRAME_QUEUE_WAIT_GRACE_MS = 100.0
 FRAME_PROCESSING_WARNING_MS = 200.0
 FAN_OUT_ENQUEUE_WARNING_MS = 50.0
 MONITOR_PACKET_HISTORY_LIMIT = 40
@@ -878,6 +879,23 @@ class RuntimeService:
         return int(round((sample_count / frame.sample_rate) * 1_000_000))
 
     @staticmethod
+    def _should_warn_frame_lagging(
+        *,
+        queue_wait_ms: float,
+        pipeline_ms: float,
+        fan_out_ms: float,
+        frame_duration_ms: int | None,
+    ) -> bool:
+        queue_wait_threshold_ms = FRAME_QUEUE_WAIT_WARNING_MS
+        if frame_duration_ms is not None and frame_duration_ms > 0:
+            queue_wait_threshold_ms = max(queue_wait_threshold_ms, frame_duration_ms + FRAME_QUEUE_WAIT_GRACE_MS)
+        return (
+            queue_wait_ms > queue_wait_threshold_ms
+            or pipeline_ms >= FRAME_PROCESSING_WARNING_MS
+            or fan_out_ms >= FAN_OUT_ENQUEUE_WARNING_MS
+        )
+
+    @staticmethod
     def _start_time_from_reference_timestamp(
         *,
         reference_timestamp_us: int | None,
@@ -953,10 +971,12 @@ class RuntimeService:
                 fan_out_ms = (time.monotonic() - fan_out_started_at) * 1000.0
                 total_ms = (time.monotonic() - processing_started_at) * 1000.0
                 queue_depth_after = self._queue.qsize()
-                if (
-                    queue_wait_ms >= FRAME_QUEUE_WAIT_WARNING_MS
-                    or pipeline_ms >= FRAME_PROCESSING_WARNING_MS
-                    or fan_out_ms >= FAN_OUT_ENQUEUE_WARNING_MS
+                frame_duration_ms = self._frame_duration_us(frame)
+                if self._should_warn_frame_lagging(
+                    queue_wait_ms=queue_wait_ms,
+                    pipeline_ms=pipeline_ms,
+                    fan_out_ms=fan_out_ms,
+                    frame_duration_ms=frame_duration_ms,
                 ):
                     LOGGER.warning(
                         "Frame processing is lagging: queue_wait_ms=%.1f, pipeline_ms=%.1f, "

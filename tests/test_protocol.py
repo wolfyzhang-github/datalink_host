@@ -1291,17 +1291,37 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(service._handle_raw_line("2026-04-29 07:52:08.253121", settings))
         self.assertTrue(
             service._handle_raw_line(
-                "*GBGGA,075208.00,3953.27318924,N,11628.79890236,E,7,06,17.72,99.1379,M,-7.0097,M,,*54",
+                "$GBGGA,152553.00,4001.12329487,N,11610.20880656,E,7,07,2.37,212.4017,M,-7.7918,M,,*57",
                 settings,
             )
         )
-        self.assertTrue(service._handle_raw_line("#Phase, -82 ns", settings))
+        self.assertTrue(service._handle_raw_line("$Phase,3 ns", settings))
 
         status = service.status()
         assert status.last_timestamp_us is not None
         self.assertEqual("20260429075208253121", format_timestamp_us(status.last_timestamp_us))
-        self.assertEqual(6, status.satellite_count)
-        self.assertEqual(-82, status.clock_difference_ns)
+        self.assertEqual(7, status.satellite_count)
+        self.assertEqual(3, status.clock_difference_ns)
+
+    def test_runtime_does_not_warn_on_expected_frame_period_wait(self) -> None:
+        self.assertFalse(
+            RuntimeService._should_warn_frame_lagging(  # type: ignore[attr-defined]
+                queue_wait_ms=1000.0,
+                pipeline_ms=0.0,
+                fan_out_ms=0.0,
+                frame_duration_ms=1000,
+            )
+        )
+
+    def test_runtime_warns_when_wait_exceeds_frame_period_by_margin(self) -> None:
+        self.assertTrue(
+            RuntimeService._should_warn_frame_lagging(  # type: ignore[attr-defined]
+                queue_wait_ms=1150.0,
+                pipeline_ms=0.0,
+                fan_out_ms=0.0,
+                frame_duration_ms=1000,
+            )
+        )
 
     def test_gnss_current_time_stays_monotonic_when_device_repeats_whole_seconds(self) -> None:
         service = GnssTimeService(GnssSettings(enabled=True, mode="deploy", port="tty.usbmodem"))

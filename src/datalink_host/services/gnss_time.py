@@ -25,8 +25,8 @@ _DEPLOY_PATTERN = re.compile(r"^(?P<stamp>\d{14})(?P<fraction>\d{6})$")
 _DEPLOY_DOTTED_PATTERN = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2})\.(?P<fraction>\d{6})$"
 )
-_GGA_SATELLITE_PATTERN = re.compile(r"^\*?(?P<sentence>[A-Z0-9]{2,5}GGA),")
-_PHASE_PATTERN = re.compile(r"^#Phase,\s*(?P<value>[-+]?\d+)\s*ns$", re.IGNORECASE)
+_GGA_SATELLITE_PATTERN = re.compile(r"^[\$*]?(?P<sentence>[A-Z0-9]{2,5}GGA),")
+_PHASE_PATTERN = re.compile(r"^[\$#]Phase,\s*(?P<value>[-+]?\d+)\s*ns$", re.IGNORECASE)
 
 
 def gnss_timestamp_to_us(raw_value: str, mode: str) -> int:
@@ -400,13 +400,13 @@ class GnssTimeService:
 
     @staticmethod
     def _parse_satellite_count(raw_value: str) -> int | None:
-        value = raw_value.strip()
+        value = raw_value.strip().lstrip("$*")
         if not value:
             return None
         match = _GGA_SATELLITE_PATTERN.match(value)
         if match is None:
             return None
-        parts = value.lstrip("*").split(",")
+        parts = value.split(",")
         if len(parts) <= 7:
             return None
         satellite_field = parts[7].strip()
