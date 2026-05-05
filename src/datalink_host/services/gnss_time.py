@@ -25,6 +25,8 @@ _DEPLOY_PATTERN = re.compile(r"^(?P<stamp>\d{14})(?P<fraction>\d{6})$")
 _DEPLOY_DOTTED_PATTERN = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2})\.(?P<fraction>\d{6})$"
 )
+_GGA_SATELLITE_PATTERN = re.compile(r"^\*?(?P<sentence>[A-Z0-9]{2,5}GGA),")
+_PHASE_PATTERN = re.compile(r"^#Phase,\s*(?P<value>[-+]?\d+)\s*ns$", re.IGNORECASE)
 
 
 def gnss_timestamp_to_us(raw_value: str, mode: str) -> int:
@@ -84,6 +86,8 @@ class GnssStatus:
     poll_interval_seconds: float
     last_timestamp_us: int | None
     last_error: str | None
+    satellite_count: int | None = None
+    clock_difference_ns: int | None = None
 
 
 class GnssTimeService:
@@ -99,6 +103,8 @@ class GnssTimeService:
             baudrate=settings.baudrate,
             poll_interval_seconds=settings.poll_interval_seconds,
             last_timestamp_us=None,
+            satellite_count=None,
+            clock_difference_ns=None,
             last_error=None,
         )
         self._current_timestamp_anchor_us: int | None = None
@@ -259,18 +265,36 @@ class GnssTimeService:
             if not raw_line:
                 continue
             raw_value = raw_line.decode("utf-8", errors="ignore").strip()
-            try:
-                timestamp_us = gnss_timestamp_to_us(raw_value, settings.mode)
-            except Exception as exc:  # noqa: BLE001
-                self._set_error(str(exc))
-                LOGGER.warning("Failed to parse GNSS timestamp: raw=%r error=%s", raw_value, exc)
+            if self._handle_raw_line(raw_value, settings):
                 continue
+            if raw_value:
+                LOGGER.debug("Ignored GNSS serial line: raw=%r", raw_value)
+
+    def _handle_raw_line(self, raw_value: str, settings: GnssSettings) -> bool:
+        try:
+            timestamp_us = gnss_timestamp_to_us(raw_value, settings.mode)
+        except ValueError:
+            timestamp_us = None
+        if timestamp_us is not None:
             anchor_timestamp_us = self._record_timestamp(timestamp_us)
             self._warn_on_host_skew(
                 raw_value=raw_value,
                 parsed_timestamp_us=timestamp_us,
                 anchor_timestamp_us=anchor_timestamp_us,
             )
+            return True
+
+        satellite_count = self._parse_satellite_count(raw_value)
+        if satellite_count is not None:
+            self._set_satellite_count(satellite_count)
+            return True
+
+        clock_difference_ns = self._parse_clock_difference_ns(raw_value)
+        if clock_difference_ns is not None:
+            self._set_clock_difference_ns(clock_difference_ns)
+            return True
+
+        return False
 
     def _snapshot_settings(self) -> GnssSettings:
         with self._lock:
@@ -354,6 +378,14 @@ class GnssTimeService:
         with self._lock:
             self._status = replace(self._status, last_error=message)
 
+    def _set_satellite_count(self, satellite_count: int) -> None:
+        with self._lock:
+            self._status = replace(self._status, satellite_count=satellite_count)
+
+    def _set_clock_difference_ns(self, clock_difference_ns: int) -> None:
+        with self._lock:
+            self._status = replace(self._status, clock_difference_ns=clock_difference_ns)
+
     @staticmethod
     def _discard_stale_input(conn: serial.Serial) -> int:
         buffered_bytes = 0
@@ -365,6 +397,35 @@ class GnssTimeService:
         if callable(reset):
             reset()
         return buffered_bytes
+
+    @staticmethod
+    def _parse_satellite_count(raw_value: str) -> int | None:
+        value = raw_value.strip()
+        if not value:
+            return None
+        match = _GGA_SATELLITE_PATTERN.match(value)
+        if match is None:
+            return None
+        parts = value.lstrip("*").split(",")
+        if len(parts) <= 7:
+            return None
+        satellite_field = parts[7].strip()
+        if not satellite_field:
+            return None
+        try:
+            return int(satellite_field)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_clock_difference_ns(raw_value: str) -> int | None:
+        match = _PHASE_PATTERN.fullmatch(raw_value.strip())
+        if match is None:
+            return None
+        try:
+            return int(match.group("value"))
+        except ValueError:
+            return None
 
     def _current_time_us_locked(self, now_monotonic: float) -> int | None:
         anchor_timestamp_us = self._current_timestamp_anchor_us

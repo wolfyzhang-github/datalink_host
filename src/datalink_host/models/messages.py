@@ -85,6 +85,7 @@ class RuntimeSnapshot:
     gnss_mode: str
     gnss_port: str
     gnss_baudrate: int
+    gnss_satellite_count: int | None
     gnss_last_timestamp: str | None
     gnss_last_error: str | None
     gnss_fallback_active: bool

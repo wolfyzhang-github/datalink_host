@@ -233,7 +233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tabs.addTab(self._build_device_settings_tab(), "设备参数设置")
         tabs.addTab(self._build_waveform_tab(), "波形显示")
         tabs.addTab(self._build_download_tab(), "数据下载")
-        tabs.addTab(self._build_debug_tab(), "其他调试功能")
+        tabs.addTab(self._build_debug_tab(), "维护工具")
         shell_layout.addWidget(tabs, stretch=1)
 
         outer.addWidget(shell)
@@ -312,6 +312,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "satellite_status",
                 "GNSS 状态",
                 [
+                    ("gnss_satellite_count", "卫星数"),
                     ("gnss_connected", "授时连接"),
                     ("gnss_fallback_active", "回退状态"),
                 ],
@@ -372,11 +373,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._data1_rate_spin.setDecimals(2)
         self._data1_rate_spin.setSuffix(" Hz")
 
+        self._data2_rate_spin = QtWidgets.QDoubleSpinBox(card)
+        self._data2_rate_spin.setRange(0.1, 10000.0)
+        self._data2_rate_spin.setDecimals(2)
+        self._data2_rate_spin.setSuffix(" Hz")
+
         self._storage_station_edit = QtWidgets.QLineEdit(card)
         self._storage_station_edit.setPlaceholderText("输入保存文件名")
         self._storage_station_edit.setToolTip("该名称会作为数据文件名中的主要标识。")
 
-        card_layout.addRow("采样率", self._data1_rate_spin)
+        card_layout.addRow("采样率1", self._data1_rate_spin)
+        card_layout.addRow("采样率2", self._data2_rate_spin)
         card_layout.addRow("文件名", self._storage_station_edit)
         layout.addWidget(card)
         layout.addStretch(1)
@@ -435,8 +442,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(16)
         layout.addWidget(
             self._build_page_intro(
-                "其他调试功能",
-                "高级配置、队列、日志和远程接口集中在这里，便于维护和现场调试。",
+                "维护工具",
+                "高级配置、队列、日志和远程接口集中在这里，便于现场维护。",
             )
         )
 
@@ -460,7 +467,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(
             self._build_page_intro(
                 "高级配置",
-                "协议、存储、远传和 GNSS 相关的技术参数集中在这里。",
+                "保留少量现场会调整的参数，其余协议和调试项已收起。",
             )
         )
 
@@ -651,25 +658,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._datalink_host_edit = QtWidgets.QLineEdit(datalink_card)
         self._datalink_port_spin = QtWidgets.QSpinBox(datalink_card)
         self._datalink_port_spin.setRange(1, 65535)
-        self._datalink_stream_template_edit = QtWidgets.QLineEdit(datalink_card)
-        self._datalink_ack_checkbox = QtWidgets.QCheckBox("发送后等待 ACK", datalink_card)
-        self._datalink_send_data2_checkbox = QtWidgets.QCheckBox("同时发送降采样2", datalink_card)
 
         datalink_layout.addWidget(self._datalink_enabled_checkbox)
         form.addRow("远传主机", self._datalink_host_edit)
         form.addRow("远传端口", self._datalink_port_spin)
-        form.addRow("流模板", self._datalink_stream_template_edit)
-        form.addRow("确认策略", self._datalink_ack_checkbox)
-        form.addRow("发送内容", self._datalink_send_data2_checkbox)
         datalink_layout.addLayout(form)
-
-        tip = QtWidgets.QLabel(
-            "流模板可使用 {network}、{station}、{location}、{channel}、{group} 占位符。",
-            datalink_card,
-        )
-        tip.setWordWrap(True)
-        tip.setObjectName("mutedText")
-        datalink_layout.addWidget(tip)
         datalink_layout.addStretch(1)
         workspace_layout.addWidget(datalink_card, stretch=3)
 
@@ -822,47 +815,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._data_remote_port_spin = QtWidgets.QSpinBox(card)
         self._data_remote_port_spin.setRange(1, 65535)
 
-        self._frame_header_edit = QtWidgets.QLineEdit(card)
-        self._frame_header_size_combo = QtWidgets.QComboBox(card)
-        self._frame_header_size_combo.addItems(["2", "4", "8"])
-        self._length_field_size_combo = QtWidgets.QComboBox(card)
-        self._length_field_size_combo.addItems(["4", "8"])
-        self._length_field_format_combo = QtWidgets.QComboBox(card)
-        self._length_field_format_combo.addItem("无符号整数", "uint")
-        self._length_field_format_combo.addItem("浮点 float64", "float64")
-        self._length_field_units_combo = QtWidgets.QComboBox(card)
-        self._length_field_units_combo.addItem("字节", "bytes")
-        self._length_field_units_combo.addItem("数值个数", "values")
-        self._byte_order_combo = QtWidgets.QComboBox(card)
-        self._byte_order_combo.addItem("大端", "big")
-        self._byte_order_combo.addItem("小端", "little")
-        self._channel_layout_combo = QtWidgets.QComboBox(card)
-        self._channel_layout_combo.addItem("采样交织", "interleaved")
-        self._channel_layout_combo.addItem("按通道连续", "channel-major")
-
-        if self._data1_rate_spin is None:
-            self._data1_rate_spin = QtWidgets.QDoubleSpinBox(card)
-            self._data1_rate_spin.setRange(0.1, 10000.0)
-            self._data1_rate_spin.setDecimals(2)
-        self._data2_rate_spin = QtWidgets.QDoubleSpinBox(card)
-        self._data2_rate_spin.setRange(0.1, 10000.0)
-        self._data2_rate_spin.setDecimals(2)
-
         form.addRow("接入模式", self._data_server_mode_combo)
         form.addRow("本地监听地址", self._data_host_edit)
         form.addRow("本地监听端口", self._data_port_spin)
         form.addRow("设备地址", self._data_remote_host_edit)
         form.addRow("设备端口", self._data_remote_port_spin)
-        form.addRow("帧头值", self._frame_header_edit)
-        form.addRow("帧头字节数", self._frame_header_size_combo)
-        form.addRow("长度字段字节数", self._length_field_size_combo)
-        form.addRow("长度字段格式", self._length_field_format_combo)
-        form.addRow("长度单位", self._length_field_units_combo)
-        form.addRow("字节序", self._byte_order_combo)
-        form.addRow("通道排列", self._channel_layout_combo)
-        form.addRow("采样率2", self._data2_rate_spin)
-        if self._data1_rate_spin.parent() is card:
-            form.insertRow(0, "采样率", self._data1_rate_spin)
         layout.addLayout(form)
 
         self._connection_mode_hint_label = QtWidgets.QLabel(card)
@@ -902,42 +859,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._storage_duration_spin = QtWidgets.QSpinBox(card)
         self._storage_duration_spin.setRange(1, 86400)
-        self._storage_output_data_type_combo = QtWidgets.QComboBox(card)
-        self._storage_output_data_type_combo.addItem("float32", "float32")
-        self._storage_output_data_type_combo.addItem("INT32", "int32")
-        self._storage_output_data_type_combo.currentIndexChanged.connect(self._update_form_state)
-        self._storage_int32_gain_spin = QtWidgets.QDoubleSpinBox(card)
-        self._storage_int32_gain_spin.setRange(0.000001, 1_000_000_000_000.0)
-        self._storage_int32_gain_spin.setDecimals(6)
-        self._storage_int32_gain_spin.setSingleStep(1000.0)
-        self._storage_network_edit = QtWidgets.QLineEdit(card)
-        self._storage_location_edit = QtWidgets.QLineEdit(card)
-        self._storage_channel_codes_table = self._create_channel_codes_table(card)
-
-        self._capture_enabled_checkbox = QtWidgets.QCheckBox("启用原始 TCP 抓包", card)
-        self._capture_enabled_checkbox.toggled.connect(self._update_form_state)
-        self._capture_path_edit = QtWidgets.QLineEdit(card)
-        self._capture_browse_button = QtWidgets.QPushButton("抓包文件...", card)
-        self._capture_browse_button.clicked.connect(self._choose_capture_path)
-        capture_row = QtWidgets.QHBoxLayout()
-        capture_row.addWidget(self._capture_path_edit, stretch=1)
-        capture_row.addWidget(self._capture_browse_button)
-        capture_widget = QtWidgets.QWidget(card)
-        capture_widget.setLayout(capture_row)
 
         form.addRow("存储目录", storage_widget)
         form.addRow("单文件时长(秒)", self._storage_duration_spin)
-        form.addRow("数据类型(存储/远传)", self._storage_output_data_type_combo)
-        form.addRow("增益", self._storage_int32_gain_spin)
-        form.addRow("网络码", self._storage_network_edit)
-        if self._storage_station_edit is None:
-            self._storage_station_edit = QtWidgets.QLineEdit(card)
-            self._storage_station_edit.setPlaceholderText("输入保存文件名")
-            form.addRow("文件名", self._storage_station_edit)
-        form.addRow("位置码", self._storage_location_edit)
-        form.addRow("通道码", self._storage_channel_codes_table)
-        form.addRow(self._capture_enabled_checkbox)
-        form.addRow("抓包文件", capture_widget)
         layout.addLayout(form)
 
         runtime_form = QtWidgets.QFormLayout()
@@ -983,21 +907,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._gnss_baudrate_spin = QtWidgets.QSpinBox(card)
         self._gnss_baudrate_spin.setRange(1, 921600)
-        self._gnss_mode_combo = QtWidgets.QComboBox(card)
-        self._gnss_mode_combo.addItem("调试模式", "debug")
-        self._gnss_mode_combo.addItem("部署模式", "deploy")
-        self._gnss_poll_spin = QtWidgets.QDoubleSpinBox(card)
-        self._gnss_poll_spin.setRange(0.01, 10.0)
-        self._gnss_poll_spin.setDecimals(2)
-        self._gnss_timestamp_interval_spin = QtWidgets.QDoubleSpinBox(card)
-        self._gnss_timestamp_interval_spin.setRange(0.001, 10.0)
-        self._gnss_timestamp_interval_spin.setDecimals(3)
 
         form.addRow("串口", port_widget)
         form.addRow("波特率", self._gnss_baudrate_spin)
-        form.addRow("模式", self._gnss_mode_combo)
-        form.addRow("轮询间隔(秒)", self._gnss_poll_spin)
-        form.addRow("授时等待超时(秒)", self._gnss_timestamp_interval_spin)
         layout.addLayout(form)
 
         runtime_form = QtWidgets.QFormLayout()
@@ -1191,43 +1103,21 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._data_port_spin is not None
         assert self._data_remote_host_edit is not None
         assert self._data_remote_port_spin is not None
-        assert self._frame_header_edit is not None
-        assert self._frame_header_size_combo is not None
-        assert self._length_field_size_combo is not None
-        assert self._length_field_format_combo is not None
-        assert self._length_field_units_combo is not None
-        assert self._byte_order_combo is not None
-        assert self._channel_layout_combo is not None
         assert self._storage_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
-        assert self._storage_output_data_type_combo is not None
-        assert self._storage_int32_gain_spin is not None
-        assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
-        assert self._storage_location_edit is not None
-        assert self._storage_channel_codes_table is not None
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
-        assert self._datalink_stream_template_edit is not None
-        assert self._datalink_ack_checkbox is not None
-        assert self._datalink_send_data2_checkbox is not None
-        assert self._capture_enabled_checkbox is not None
-        assert self._capture_path_edit is not None
         assert self._gnss_enabled_checkbox is not None
         assert self._gnss_port_combo is not None
         assert self._gnss_baudrate_spin is not None
-        assert self._gnss_mode_combo is not None
-        assert self._gnss_poll_spin is not None
-        assert self._gnss_timestamp_interval_spin is not None
 
         processing = config["processing"]
         data_server = config["data_server"]
-        protocol = config["protocol"]
         storage = config["storage"]
         datalink = config["datalink"]
-        capture = config["capture"]
         gnss = config["gnss"]
 
         self._data1_rate_spin.setValue(processing["data1_rate"])
@@ -1239,48 +1129,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._data_remote_host_edit.setText(data_server["remote_host"])
         self._data_remote_port_spin.setValue(data_server["remote_port"])
 
-        self._frame_header_edit.setText(str(protocol["frame_header"]))
-        self._frame_header_size_combo.setCurrentText(str(protocol["frame_header_size"]))
-        self._length_field_size_combo.setCurrentText(str(protocol["length_field_size"]))
-        self._length_field_format_combo.setCurrentIndex(
-            0 if protocol["length_field_format"] == "uint" else 1
-        )
-        self._length_field_units_combo.setCurrentIndex(0 if protocol["length_field_units"] == "bytes" else 1)
-        self._byte_order_combo.setCurrentIndex(0 if protocol["byte_order"] == "big" else 1)
-        self._channel_layout_combo.setCurrentIndex(
-            0 if protocol["channel_layout"] == "interleaved" else 1
-        )
-
         self._storage_enabled_checkbox.setChecked(storage["enabled"])
         self._storage_root_edit.setText(storage["root"])
         self._storage_duration_spin.setValue(storage["file_duration_seconds"])
-        output_data_type_index = self._storage_output_data_type_combo.findData(
-            str(storage.get("output_data_type", "float32")).lower()
-        )
-        self._storage_output_data_type_combo.setCurrentIndex(max(output_data_type_index, 0))
-        self._storage_int32_gain_spin.setValue(float(storage.get("int32_gain", 1_000_000.0)))
-        self._storage_network_edit.setText(storage["network"])
         self._storage_station_edit.setText(storage["station"])
-        self._storage_location_edit.setText(storage["location"])
-        self._set_channel_codes(storage.get("channel_codes", []))
 
         self._datalink_enabled_checkbox.setChecked(datalink["enabled"])
         self._datalink_host_edit.setText(datalink["host"])
         self._datalink_port_spin.setValue(datalink["port"])
-        self._datalink_stream_template_edit.setText(datalink["stream_id_template"])
-        self._datalink_ack_checkbox.setChecked(datalink["ack_required"])
-        self._datalink_send_data2_checkbox.setChecked(datalink["send_data2"])
-
-        self._capture_enabled_checkbox.setChecked(capture["enabled"])
-        self._capture_path_edit.setText(capture["path"])
 
         self._gnss_enabled_checkbox.setChecked(gnss["enabled"])
         self._gnss_baudrate_spin.setValue(gnss["baudrate"])
-        self._gnss_mode_combo.setCurrentIndex(0 if gnss["mode"] == "debug" else 1)
-        self._gnss_poll_spin.setValue(gnss["poll_interval_seconds"])
-        self._gnss_timestamp_interval_spin.setValue(
-            gnss.get("packet_timestamp_timeout_seconds", gnss.get("timestamp_interval_seconds", 1.0))
-        )
         self._refresh_gnss_ports(selected=gnss["port"])
         self._update_form_state()
         self._sync_mode_selectors()
@@ -1356,9 +1215,6 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._data_remote_host_edit is not None
         assert self._data_remote_port_spin is not None
         assert self._connection_mode_hint_label is not None
-        assert self._datalink_stream_template_edit is not None
-        assert self._storage_output_data_type_combo is not None
-        assert self._storage_int32_gain_spin is not None
 
         self._data_host_edit.setEnabled(server_mode)
         self._data_port_spin.setEnabled(server_mode)
@@ -1379,32 +1235,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._storage_root_edit,
                 self._storage_browse_button,
                 self._storage_duration_spin,
-                self._storage_output_data_type_combo,
-                self._storage_int32_gain_spin,
-                self._storage_network_edit,
                 self._storage_station_edit,
-                self._storage_location_edit,
-                self._storage_channel_codes_table,
             ],
-        )
-        self._storage_int32_gain_spin.setEnabled(
-            self._storage_output_data_type_combo.currentData() == "int32"
         )
         self._set_section_enabled(
             True,
             [
                 self._datalink_host_edit,
                 self._datalink_port_spin,
-                self._datalink_stream_template_edit,
-                self._datalink_ack_checkbox,
-                self._datalink_send_data2_checkbox,
-            ],
-        )
-        self._set_section_enabled(
-            self._capture_enabled_checkbox.isChecked() if self._capture_enabled_checkbox is not None else False,
-            [
-                self._capture_path_edit,
-                self._capture_browse_button,
             ],
         )
         self._set_section_enabled(
@@ -1413,9 +1251,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._gnss_port_combo,
                 self._gnss_refresh_button,
                 self._gnss_baudrate_spin,
-                self._gnss_mode_combo,
-                self._gnss_poll_spin,
-                self._gnss_timestamp_interval_spin,
             ],
         )
         self._update_processing_controls()
@@ -1454,43 +1289,16 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._data_port_spin is not None
         assert self._data_remote_host_edit is not None
         assert self._data_remote_port_spin is not None
-        assert self._frame_header_edit is not None
-        assert self._frame_header_size_combo is not None
-        assert self._length_field_size_combo is not None
-        assert self._length_field_format_combo is not None
-        assert self._length_field_units_combo is not None
-        assert self._byte_order_combo is not None
-        assert self._channel_layout_combo is not None
         assert self._storage_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
-        assert self._storage_output_data_type_combo is not None
-        assert self._storage_int32_gain_spin is not None
-        assert self._storage_network_edit is not None
         assert self._storage_station_edit is not None
-        assert self._storage_location_edit is not None
-        assert self._storage_channel_codes_table is not None
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
-        assert self._datalink_stream_template_edit is not None
-        assert self._datalink_ack_checkbox is not None
-        assert self._datalink_send_data2_checkbox is not None
-        assert self._capture_enabled_checkbox is not None
-        assert self._capture_path_edit is not None
         assert self._gnss_enabled_checkbox is not None
         assert self._gnss_port_combo is not None
         assert self._gnss_baudrate_spin is not None
-        assert self._gnss_mode_combo is not None
-        assert self._gnss_poll_spin is not None
-        assert self._gnss_timestamp_interval_spin is not None
-
-        try:
-            channel_codes = self._channel_codes_from_table()
-        except ValueError as exc:
-            self._set_feedback(f"应用失败: {exc}", is_error=True)
-            QtWidgets.QMessageBox.critical(self, "应用配置失败", str(exc))
-            return
 
         payload = {
             "processing": {
@@ -1504,46 +1312,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 "remote_host": self._data_remote_host_edit.text().strip() or "127.0.0.1",
                 "remote_port": self._data_remote_port_spin.value(),
             },
-            "protocol": {
-                "frame_header": self._frame_header_edit.text().strip() or "11",
-                "frame_header_size": int(self._frame_header_size_combo.currentText()),
-                "length_field_size": int(self._length_field_size_combo.currentText()),
-                "length_field_format": self._length_field_format_combo.currentData(),
-                "length_field_units": self._length_field_units_combo.currentData(),
-                "byte_order": self._byte_order_combo.currentData(),
-                "channel_layout": self._channel_layout_combo.currentData(),
-            },
             "storage": {
                 "enabled": self._storage_enabled_checkbox.isChecked(),
                 "root": self._storage_root_edit.text().strip() or r"E:\data",
                 "file_duration_seconds": self._storage_duration_spin.value(),
-                "output_data_type": self._storage_output_data_type_combo.currentData(),
-                "int32_gain": self._storage_int32_gain_spin.value(),
-                "network": self._storage_network_edit.text().strip() or "SC",
                 "station": self._storage_station_edit.text().strip() or "S0001",
-                "location": self._storage_location_edit.text().strip() or "10",
-                "channel_codes": channel_codes,
             },
             "datalink": {
                 "enabled": self._datalink_enabled_checkbox.isChecked(),
                 "host": self._datalink_host_edit.text().strip() or "10.2.12.61",
                 "port": self._datalink_port_spin.value(),
-                "stream_id_template": self._datalink_stream_template_edit.text().strip()
-                or "{network}_{station}_{location}_{channel}/MSEED",
-                "ack_required": self._datalink_ack_checkbox.isChecked(),
-                "send_data2": self._datalink_send_data2_checkbox.isChecked(),
-            },
-            "capture": {
-                "enabled": self._capture_enabled_checkbox.isChecked(),
-                "path": self._capture_path_edit.text().strip() or "./var/captures/session.dlhcap",
             },
             "gnss": {
                 "enabled": self._gnss_enabled_checkbox.isChecked(),
                 "port": self._gnss_port_combo.currentText().strip(),
                 "baudrate": self._gnss_baudrate_spin.value(),
-                "mode": self._gnss_mode_combo.currentData(),
-                "poll_interval_seconds": self._gnss_poll_spin.value(),
-                "packet_timestamp_timeout_seconds": self._gnss_timestamp_interval_spin.value(),
             },
         }
         try:
@@ -1664,6 +1447,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "gnss_enabled": "已启用" if snapshot.gnss_enabled else "未启用",
             "gnss_connected": "已连接" if snapshot.gnss_connected else "未连接",
             "satellite_status": satellite_status,
+            "gnss_satellite_count": "-" if snapshot.gnss_satellite_count is None else f"{snapshot.gnss_satellite_count:d}",
             "gnss_mode": snapshot.gnss_mode,
             "gnss_port": snapshot.gnss_port or "-",
             "gnss_last_timestamp": self._format_gnss_timestamp(snapshot.gnss_last_timestamp),

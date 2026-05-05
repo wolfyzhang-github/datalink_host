@@ -1284,6 +1284,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual("20260409133032000000", format_timestamp_us(deploy_ts))
         self.assertEqual("20260422081848900000", format_timestamp_us(deploy_dotted_ts))
 
+    def test_gnss_service_parses_multiline_status_return(self) -> None:
+        settings = GnssSettings(enabled=True, mode="deploy", port="tty.usbmodem")
+        service = GnssTimeService(settings)
+
+        self.assertTrue(service._handle_raw_line("2026-04-29 07:52:08.253121", settings))
+        self.assertTrue(
+            service._handle_raw_line(
+                "*GBGGA,075208.00,3953.27318924,N,11628.79890236,E,7,06,17.72,99.1379,M,-7.0097,M,,*54",
+                settings,
+            )
+        )
+        self.assertTrue(service._handle_raw_line("#Phase, -82 ns", settings))
+
+        status = service.status()
+        assert status.last_timestamp_us is not None
+        self.assertEqual("20260429075208253121", format_timestamp_us(status.last_timestamp_us))
+        self.assertEqual(6, status.satellite_count)
+        self.assertEqual(-82, status.clock_difference_ns)
+
     def test_gnss_current_time_stays_monotonic_when_device_repeats_whole_seconds(self) -> None:
         service = GnssTimeService(GnssSettings(enabled=True, mode="deploy", port="tty.usbmodem"))
         service._record_timestamp(1_700_000_000_000_000, recorded_at_monotonic=10.0)
@@ -1757,6 +1776,19 @@ class ProtocolTests(unittest.TestCase):
 
     def test_web_api_exposes_runtime_status_and_ports(self) -> None:
         runtime = RuntimeService(AppSettings())
+        runtime._gnss_time.status = Mock(  # type: ignore[method-assign]
+            return_value=GnssStatus(
+                enabled=True,
+                connected=True,
+                mode="deploy",
+                port="tty.usbmodem1101",
+                baudrate=115200,
+                poll_interval_seconds=0.1,
+                last_timestamp_us=None,
+                last_error=None,
+                satellite_count=6,
+            )
+        )
         runtime.gnss_ports = Mock(return_value=["tty.usbmodem1101"])  # type: ignore[method-assign]
         app = create_app(runtime)
 
@@ -1764,6 +1796,7 @@ class ProtocolTests(unittest.TestCase):
             status_response = client.get("/api/status")
             self.assertEqual(200, status_response.status_code)
             self.assertEqual("ok", status_response.json()["status"])
+            self.assertEqual(6, status_response.json()["payload"]["gnss_satellite_count"])
 
             ports_response = client.get("/api/gnss/ports")
             self.assertEqual(200, ports_response.status_code)
