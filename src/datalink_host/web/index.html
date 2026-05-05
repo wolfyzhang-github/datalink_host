@@ -213,7 +213,7 @@
 
     .settings-layout {
       display: grid;
-      grid-template-columns: minmax(320px, 720px) 1fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 28px;
       align-items: start;
     }
@@ -429,8 +429,6 @@
               <div class="kv-list">
                 <div class="kv-row"><span class="kv-label">设备 IP</span><span id="status-device-ip" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">设备端口</span><span id="status-device-port" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">帧头</span><span id="status-frame-header" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">源采样率</span><span id="status-source-rate" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">采样率1</span><span id="status-data1-rate" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">采样率2</span><span id="status-data2-rate" class="kv-value">-</span></div>
               </div>
@@ -443,9 +441,8 @@
                 <div class="kv-row"><span class="kv-label">卫星状态</span><span id="status-satellite" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">卫星数</span><span id="status-gnss-satellites" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">GNSS 时间</span><span id="status-gnss-time" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">钟差</span><span id="status-gnss-clock" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">GNSS 连接</span><span id="status-gnss" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">GNSS 端口</span><span id="status-gnss-port" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">回退状态</span><span id="status-gnss-fallback" class="kv-value">-</span></div>
               </div>
             </section>
 
@@ -456,43 +453,7 @@
                 <div class="kv-row"><span class="kv-label">硬盘剩余容量</span><span id="status-disk-free" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">磁盘利用率</span><span id="status-disk-usage" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">存储状态</span><span id="status-storage" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">存储目录</span><span id="status-storage-root" class="kv-value">-</span></div>
                 <div class="kv-row"><span class="kv-label">存储错误</span><span id="status-storage-error" class="kv-value">-</span></div>
-              </div>
-            </section>
-          </div>
-
-          <div class="status-grid mt-4">
-            <section class="status-panel">
-              <span id="transfer-dot" class="status-dot"></span>
-              <h2 class="panel-title">数据传输</h2>
-              <div class="kv-list">
-                <div class="kv-row"><span class="kv-label">接收状态</span><span id="status-transfer-state" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">数据连接</span><span id="status-data-connection" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">接收数量</span><span id="status-packets" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">接收字节</span><span id="status-bytes" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">处理丢帧</span><span id="status-dropped" class="kv-value">-</span></div>
-              </div>
-            </section>
-
-            <section class="status-panel">
-              <span id="datalink-dot" class="status-dot"></span>
-              <h2 class="panel-title">远程传输</h2>
-              <div class="kv-list">
-                <div class="kv-row"><span class="kv-label">远传连接</span><span id="status-datalink" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">传输数量</span><span id="status-datalink-count" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">传输字节</span><span id="status-datalink-bytes" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">连接次数</span><span id="status-datalink-reconnects" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">远传错误</span><span id="status-datalink-error" class="kv-value">-</span></div>
-              </div>
-            </section>
-
-            <section class="status-panel">
-              <h2 class="panel-title">运行提示</h2>
-              <div class="kv-list">
-                <div class="kv-row"><span class="kv-label">控制连接</span><span id="status-control" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">处理队列</span><span id="status-queue" class="kv-value">-</span></div>
-                <div class="kv-row"><span class="kv-label">最近错误</span><span id="status-last-error" class="kv-value">-</span></div>
               </div>
             </section>
           </div>
@@ -505,7 +466,7 @@
             <section class="settings-panel">
               <div class="row g-4">
                 <div class="col-md-6">
-                  <label class="form-label fs-5" for="data1-rate">采样率</label>
+                  <label class="form-label fs-5" for="data1-rate">采样率1</label>
                   <div class="input-group">
                     <input id="data1-rate" class="form-control form-control-lg" type="number" min="0.1" step="0.1">
                     <span class="input-group-text rounded-0">Hz</span>
@@ -518,14 +479,54 @@
                     <span class="input-group-text rounded-0">Hz</span>
                   </div>
                 </div>
-                <div class="col-md-6">
-                  <label class="form-label fs-5" for="storage-station">文件名</label>
-                  <input id="storage-station" class="form-control form-control-lg" type="text" placeholder="输入保存文件名">
-                </div>
               </div>
               <div class="settings-actions">
                 <button id="save-main-settings-btn" class="btn btn-success" disabled>应用参数设置</button>
-                <span class="muted">现场少用的连接、存储、远传和 GNSS 参数放在“维护”。</span>
+              </div>
+            </section>
+
+            <section class="settings-panel">
+              <div class="row g-4" id="storage-fields">
+                <div class="col-12">
+                  <div class="form-check form-switch">
+                    <input id="storage-enabled" class="form-check-input" type="checkbox">
+                    <label class="form-check-label" for="storage-enabled">启用文件存储</label>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label fs-5" for="storage-root">文件存储路径</label>
+                  <input id="storage-root" class="form-control form-control-lg" type="text" placeholder="E:\\data">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="storage-duration">文件存储时间</label>
+                  <div class="input-group">
+                    <input id="storage-duration" class="form-control form-control-lg" type="number" min="1" step="1">
+                    <span class="input-group-text rounded-0">秒</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="storage-station">文件存储名</label>
+                  <input id="storage-station" class="form-control form-control-lg" type="text" placeholder="NLSC">
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-panel">
+              <div class="row g-4" id="datalink-fields">
+                <div class="col-12">
+                  <div class="form-check form-switch">
+                    <input id="datalink-enabled" class="form-check-input" type="checkbox">
+                    <label class="form-check-label" for="datalink-enabled">启用远程传输</label>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="datalink-host">远程传输 IP</label>
+                  <input id="datalink-host" class="form-control form-control-lg" type="text" placeholder="10.2.12.61">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="datalink-port">远程传输端口</label>
+                  <input id="datalink-port" class="form-control form-control-lg" type="number" min="1" max="65535">
+                </div>
               </div>
             </section>
           </div>
@@ -538,14 +539,13 @@
             <div>
               <label class="form-label mb-1" for="wave-mode">波形来源</label>
               <select id="wave-mode" class="form-select">
-                <option value="raw" selected>原始值</option>
-                <option value="data1">采样率1</option>
+                <option value="data1" selected>采样率1</option>
                 <option value="data2">采样率2</option>
               </select>
             </div>
             <div>
               <label class="form-label mb-1" for="wave-window-seconds">显示时长</label>
-              <input id="wave-window-seconds" class="form-control" type="number" min="1" max="120" step="1" value="10">
+              <input id="wave-window-seconds" class="form-control" type="number" min="1" max="20" step="1" value="20">
             </div>
             <div>
               <label class="form-label mb-1" for="refresh-ms">刷新周期</label>
@@ -583,7 +583,6 @@
               <div class="chart-shell"><canvas id="wave-chart-5"></canvas></div>
             </section>
           </div>
-          <div id="wave-summary" class="mt-4 fs-5">默认显示最近 10s，多通道波形会在连接设备后自动刷新。</div>
         </div>
       </div>
 
@@ -620,206 +619,47 @@
       <div class="tab-pane fade" id="tab-debug" role="tabpanel">
         <div class="page-panel">
           <div class="debug-layout">
-            <div class="accordion" id="debug-accordion">
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#debug-processing">
-                    数据接入与协议解析
-                  </button>
-                </h2>
-                <div id="debug-processing" class="accordion-collapse collapse show" data-bs-parent="#debug-accordion">
-                  <div class="accordion-body">
-                    <div class="row g-3">
-                      <div class="col-md-6">
-                        <label class="form-label" for="data-mode">接入模式</label>
-                        <select id="data-mode" class="form-select">
-                          <option value="client">主动连接设备</option>
-                          <option value="server">监听设备连接</option>
-                        </select>
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="listen-host">本地监听地址</label>
-                        <input id="listen-host" class="form-control" type="text" placeholder="0.0.0.0">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="listen-port">本地监听端口</label>
-                        <input id="listen-port" class="form-control" type="number" min="1" max="65535">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="remote-host">设备地址</label>
-                        <input id="remote-host" class="form-control" type="text" placeholder="127.0.0.1">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="remote-port">设备端口</label>
-                        <input id="remote-port" class="form-control" type="number" min="1" max="65535">
-                      </div>
-                      <div class="col-12">
-                        <div id="mode-hint" class="alert alert-secondary py-2 mb-0"></div>
-                      </div>
+            <section class="debug-panel">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="form-check form-switch mb-3">
+                    <input id="gnss-enabled" class="form-check-input" type="checkbox">
+                    <label class="form-check-label" for="gnss-enabled">启用 GNSS 时间</label>
+                  </div>
+                  <div class="row g-3" id="gnss-fields">
+                    <div class="col-12">
+                      <label class="form-label" for="gnss-port">串口</label>
+                      <input id="gnss-port" class="form-control" type="text" list="gnss-port-options">
+                      <datalist id="gnss-port-options"></datalist>
+                    </div>
+                    <div class="col-md-6">
+                      <label class="form-label" for="gnss-baudrate">波特率</label>
+                      <input id="gnss-baudrate" class="form-control" type="number" min="1">
                     </div>
                   </div>
                 </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#debug-storage">
-                    本地存储与远程传输
-                  </button>
-                </h2>
-                <div id="debug-storage" class="accordion-collapse collapse" data-bs-parent="#debug-accordion">
-                  <div class="accordion-body">
-                    <div class="row g-3">
-                      <div class="col-12">
-                        <div class="form-check form-switch">
-                          <input id="storage-enabled" class="form-check-input" type="checkbox">
-                          <label class="form-check-label" for="storage-enabled">启用本地存储</label>
-                        </div>
-                      </div>
-                      <div class="row g-3 m-0 p-0" id="storage-fields">
-                        <div class="col-12">
-                          <label class="form-label" for="storage-root">存储目录</label>
-                          <input id="storage-root" class="form-control" type="text" placeholder="E:\data">
-                        </div>
-                        <div class="col-md-6">
-                          <label class="form-label" for="storage-duration">单文件时长(秒)</label>
-                          <input id="storage-duration" class="form-control" type="number" min="1">
-                        </div>
-                      </div>
-
-                      <div class="col-12 mt-3">
-                        <div class="form-check form-switch">
-                          <input id="datalink-enabled" class="form-check-input" type="checkbox">
-                          <label class="form-check-label" for="datalink-enabled">启用 DataLink 远传</label>
-                        </div>
-                      </div>
-                      <div class="row g-3 m-0 p-0" id="datalink-fields">
-                        <div class="col-md-6">
-                          <label class="form-label" for="datalink-host">远传主机</label>
-                          <input id="datalink-host" class="form-control" type="text" placeholder="10.2.12.61">
-                        </div>
-                      <div class="col-md-6">
-                        <label class="form-label" for="datalink-port">远传端口</label>
-                        <input id="datalink-port" class="form-control" type="number" min="1" max="65535">
-                      </div>
-                      </div>
+                <div class="col-md-6">
+                  <div class="row g-3 align-items-end">
+                    <div class="col-sm-6 col-lg-5">
+                      <label class="form-label" for="log-level">日志级别</label>
+                      <select id="log-level" class="form-select">
+                        <option value="all">全部</option>
+                        <option value="info">信息</option>
+                        <option value="warning">警告</option>
+                        <option value="error">错误</option>
+                      </select>
                     </div>
+                    <div class="col-auto">
+                      <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
+                    </div>
+                  </div>
+                  <div class="debug-panel mt-3">
+                    <h3 class="h5">运行日志</h3>
+                    <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
                   </div>
                 </div>
               </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#debug-gnss">
-                    GNSS 与日志
-                  </button>
-                </h2>
-                <div id="debug-gnss" class="accordion-collapse collapse" data-bs-parent="#debug-accordion">
-                  <div class="accordion-body">
-                    <div class="row g-3">
-                      <div class="col-md-6">
-                        <div class="form-check form-switch mb-3">
-                          <input id="gnss-enabled" class="form-check-input" type="checkbox">
-                          <label class="form-check-label" for="gnss-enabled">启用 GNSS 时间</label>
-                        </div>
-                        <div class="row g-3" id="gnss-fields">
-                          <div class="col-12">
-                            <label class="form-label" for="gnss-port">串口</label>
-                            <input id="gnss-port" class="form-control" type="text" list="gnss-port-options">
-                            <datalist id="gnss-port-options"></datalist>
-                          </div>
-                          <div class="col-md-6">
-                            <label class="form-label" for="gnss-baudrate">波特率</label>
-                            <input id="gnss-baudrate" class="form-control" type="number" min="1">
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="accordion-item">
-                <h2 class="accordion-header">
-                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#debug-monitor">
-                    调试监控、原始包与单通道分析
-                  </button>
-                </h2>
-                <div id="debug-monitor" class="accordion-collapse collapse" data-bs-parent="#debug-accordion">
-                  <div class="accordion-body">
-                    <div class="row g-3 align-items-end mb-3">
-                      <div class="col-sm-6 col-lg-3">
-                        <label class="form-label" for="log-level">日志级别</label>
-                        <select id="log-level" class="form-select">
-                          <option value="all">全部</option>
-                          <option value="info">信息</option>
-                          <option value="warning">警告</option>
-                          <option value="error">错误</option>
-                        </select>
-                      </div>
-                      <div class="col-auto">
-                        <button id="refresh-logs-btn" class="btn btn-outline-secondary">刷新日志</button>
-                      </div>
-                      <div class="col-sm-6 col-lg-3">
-                        <label class="form-label" for="max-packets">最近打印包数</label>
-                        <select id="max-packets" class="form-select">
-                          <option value="10">10</option>
-                          <option value="20" selected>20</option>
-                          <option value="30">30</option>
-                          <option value="40">40</option>
-                        </select>
-                      </div>
-                      <div class="col-auto">
-                        <button id="clear-packets-btn" class="btn btn-outline-secondary">清空原始包</button>
-                      </div>
-                    </div>
-                    <div class="row g-3">
-                      <div class="col-lg-6">
-                        <div class="debug-panel">
-                          <h3 class="h5">运行日志</h3>
-                          <pre id="logs-console" class="console form-control bg-dark text-light">等待日志...</pre>
-                        </div>
-                      </div>
-                      <div class="col-lg-6">
-                        <div class="debug-panel">
-                          <h3 class="h5">原始包</h3>
-                          <pre id="packets-console" class="console form-control bg-dark text-light">等待原始包...</pre>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="row g-3 align-items-end mt-3">
-                      <div class="col-sm-6 col-lg-3">
-                        <label class="form-label" for="analysis-channel">分析通道</label>
-                        <select id="analysis-channel" class="form-select"></select>
-                      </div>
-                      <div class="col-sm-6 col-lg-3">
-                        <label class="form-label" for="analysis-window">PSD 样本数</label>
-                        <select id="analysis-window" class="form-select">
-                          <option value="256">256</option>
-                          <option value="512">512</option>
-                          <option value="1024">1024</option>
-                          <option value="2048" selected>2048</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div class="row g-3 mt-1">
-                      <div class="col-lg-6">
-                        <div class="debug-panel">
-                          <h3 class="h5">时域波形</h3>
-                          <div class="chart-shell"><canvas id="analysis-time-chart"></canvas></div>
-                        </div>
-                      </div>
-                      <div class="col-lg-6">
-                        <div class="debug-panel">
-                          <h3 class="h5">PSD</h3>
-                          <div class="chart-shell"><canvas id="analysis-psd-chart"></canvas></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            </section>
           </div>
         </div>
       </div>
@@ -843,17 +683,13 @@
       pollTimer: null,
       pollInFlight: false,
       refreshMs: 1000,
-      windowSeconds: 10,
+      windowSeconds: 20,
       maxPoints: 5000,
-      maxPackets: 20,
       wavePayload: null,
       latestStatus: null,
       latestConfig: null,
       lastLogsRefreshAt: 0,
-      packetsClearedAt: 0,
       waveCharts: [],
-      analysisTimeChart: null,
-      analysisPsdChart: null,
     };
 
     const els = {
@@ -872,59 +708,28 @@
       basicDot: document.getElementById("basic-dot"),
       gnssDot: document.getElementById("gnss-dot"),
       diskDot: document.getElementById("disk-dot"),
-      transferDot: document.getElementById("transfer-dot"),
-      datalinkDot: document.getElementById("datalink-dot"),
       statusDeviceIp: document.getElementById("status-device-ip"),
       statusDevicePort: document.getElementById("status-device-port"),
-      statusFrameHeader: document.getElementById("status-frame-header"),
-      statusSourceRate: document.getElementById("status-source-rate"),
       statusData1Rate: document.getElementById("status-data1-rate"),
       statusData2Rate: document.getElementById("status-data2-rate"),
       statusSatellite: document.getElementById("status-satellite"),
       statusGnssSatellites: document.getElementById("status-gnss-satellites"),
       statusGnssTime: document.getElementById("status-gnss-time"),
+      statusGnssClock: document.getElementById("status-gnss-clock"),
       statusGnss: document.getElementById("status-gnss"),
-      statusGnssPort: document.getElementById("status-gnss-port"),
-      statusGnssFallback: document.getElementById("status-gnss-fallback"),
       statusDiskFree: document.getElementById("status-disk-free"),
       statusDiskUsage: document.getElementById("status-disk-usage"),
       statusStorage: document.getElementById("status-storage"),
-      statusStorageRoot: document.getElementById("status-storage-root"),
       statusStorageError: document.getElementById("status-storage-error"),
-      statusTransferState: document.getElementById("status-transfer-state"),
-      statusDataConnection: document.getElementById("status-data-connection"),
-      statusPackets: document.getElementById("status-packets"),
-      statusBytes: document.getElementById("status-bytes"),
-      statusDropped: document.getElementById("status-dropped"),
-      statusDatalink: document.getElementById("status-datalink"),
-      statusDatalinkCount: document.getElementById("status-datalink-count"),
-      statusDatalinkBytes: document.getElementById("status-datalink-bytes"),
-      statusDatalinkReconnects: document.getElementById("status-datalink-reconnects"),
-      statusDatalinkError: document.getElementById("status-datalink-error"),
-      statusControl: document.getElementById("status-control"),
-      statusQueue: document.getElementById("status-queue"),
-      statusLastError: document.getElementById("status-last-error"),
       waveMode: document.getElementById("wave-mode"),
       waveWindowSeconds: document.getElementById("wave-window-seconds"),
       refreshMs: document.getElementById("refresh-ms"),
-      waveSummary: document.getElementById("wave-summary"),
       waveMeta: document.getElementById("wave-meta"),
-      analysisChannel: document.getElementById("analysis-channel"),
-      analysisWindow: document.getElementById("analysis-window"),
-      maxPackets: document.getElementById("max-packets"),
       logLevel: document.getElementById("log-level"),
       refreshLogsBtn: document.getElementById("refresh-logs-btn"),
       logsConsole: document.getElementById("logs-console"),
-      clearPacketsBtn: document.getElementById("clear-packets-btn"),
-      packetsConsole: document.getElementById("packets-console"),
       data1Rate: document.getElementById("data1-rate"),
       data2Rate: document.getElementById("data2-rate"),
-      dataMode: document.getElementById("data-mode"),
-      listenHost: document.getElementById("listen-host"),
-      listenPort: document.getElementById("listen-port"),
-      remoteHost: document.getElementById("remote-host"),
-      remotePort: document.getElementById("remote-port"),
-      modeHint: document.getElementById("mode-hint"),
       storageEnabled: document.getElementById("storage-enabled"),
       storageFields: document.getElementById("storage-fields"),
       storageRoot: document.getElementById("storage-root"),
@@ -948,8 +753,6 @@
         const canvas = document.getElementById(`wave-chart-${index}`);
         state.waveCharts[index] = createLineChart(canvas, colors[index], false);
       }
-      state.analysisTimeChart = createLineChart(document.getElementById("analysis-time-chart"), "#198754", false);
-      state.analysisPsdChart = createLineChart(document.getElementById("analysis-psd-chart"), "#dc3545", true);
     }
 
     function createLineChart(canvas, color, useLogScale = false) {
@@ -974,6 +777,8 @@
           scales: {
             x: {
               type: "linear",
+              min: 0,
+              max: state.windowSeconds,
               ticks: {
                 maxTicksLimit: 5,
               },
@@ -1011,20 +816,16 @@
       els.stopBtn.addEventListener("click", stopProcessing);
       els.copyDownloadInfoBtn.addEventListener("click", copyDownloadInfo);
       els.refreshLogsBtn.addEventListener("click", () => refreshLogs(true));
-      els.clearPacketsBtn.addEventListener("click", () => {
-        state.packetsClearedAt = Date.now();
-        els.packetsConsole.textContent = "原始包视图已清空，等待下一次刷新...";
-      });
       els.waveMode.addEventListener("change", refreshMonitor);
-      els.analysisChannel.addEventListener("change", renderChartsFromWavePayload);
-      els.analysisWindow.addEventListener("change", renderChartsFromWavePayload);
       els.waveWindowSeconds.addEventListener("change", () => {
-        state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 120);
+        state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 20);
         els.waveWindowSeconds.value = String(state.windowSeconds);
-        refreshMonitor();
-      });
-      els.maxPackets.addEventListener("change", () => {
-        state.maxPackets = Number(els.maxPackets.value);
+        state.waveCharts.forEach((chart) => {
+          if (chart) {
+            chart.options.scales.x.max = state.windowSeconds;
+            chart.update("none");
+          }
+        });
         refreshMonitor();
       });
       els.refreshMs.addEventListener("change", () => {
@@ -1032,7 +833,6 @@
         restartPolling();
       });
       els.logLevel.addEventListener("change", () => refreshLogs(true));
-      els.dataMode.addEventListener("change", updateFormState);
       els.storageEnabled.addEventListener("change", updateFormState);
       els.datalinkEnabled.addEventListener("change", updateFormState);
       els.gnssEnabled.addEventListener("change", updateFormState);
@@ -1090,22 +890,24 @@
       }
       const text = String(value).trim();
       if (text.length >= 20 && /^\d+$/.test(text)) {
-        return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)} ${text.slice(8, 10)}:${text.slice(10, 12)}:${text.slice(12, 14)}.${text.slice(14, 20)}`;
+        return `${text.slice(0, 4)}-${text.slice(4, 6)}-${text.slice(6, 8)} ${text.slice(8, 10)}:${text.slice(10, 12)}:${text.slice(12, 14)}.${text.slice(14, 17)}`;
       }
       return text;
+    }
+
+    function formatClockDifference(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return "-";
+      }
+      return `${numeric} ns`;
     }
 
     function satelliteStatus(status) {
       if (!status.gnss_enabled) {
         return "未启用";
       }
-      if (status.gnss_connected && !status.gnss_fallback_active) {
-        return "已锁定";
-      }
-      if (status.gnss_connected) {
-        return "授时回退";
-      }
-      return "未连接";
+      return status.gnss_connected ? "已连接" : "未连接";
     }
 
     function setAlert(message, tone = "secondary") {
@@ -1204,22 +1006,13 @@
     }
 
     function updateFormState() {
-      const clientMode = els.dataMode.value === "client";
-      els.listenHost.disabled = clientMode;
-      els.listenPort.disabled = clientMode;
-      els.remoteHost.disabled = !clientMode;
-      els.remotePort.disabled = !clientMode;
-      els.modeHint.textContent = clientMode
-        ? "当前为主动连接设备模式：系统会主动连接“设备地址/设备端口”，监听地址只作为保留配置。"
-        : "当前为监听设备连接模式：系统会在“本地监听地址/端口”等待设备主动接入。";
-
-      toggleFieldGroup(els.storageFields, true);
-      toggleFieldGroup(els.datalinkFields, true);
+      toggleFieldGroup(els.storageFields, Boolean(els.storageEnabled.checked));
+      toggleFieldGroup(els.datalinkFields, Boolean(els.datalinkEnabled.checked));
       toggleFieldGroup(els.gnssFields, els.gnssEnabled.checked);
     }
 
     function toggleFieldGroup(container, enabled) {
-      Array.from(container.querySelectorAll("input, select, textarea, button")).forEach((node) => {
+      Array.from(container.querySelectorAll("input:not([type='checkbox']), select, textarea, button")).forEach((node) => {
         node.disabled = !enabled;
       });
       container.classList.toggle("opacity-50", !enabled);
@@ -1228,22 +1021,16 @@
     function applyConfigToForm(config) {
       state.latestConfig = config;
       const processing = config.processing || {};
-      const dataServer = config.data_server || {};
       const storage = config.storage || {};
       const datalink = config.datalink || {};
       const gnss = config.gnss || {};
 
       els.data1Rate.value = processing.data1_rate ?? 100;
       els.data2Rate.value = processing.data2_rate ?? 10;
-      els.dataMode.value = dataServer.mode || "client";
-      els.listenHost.value = dataServer.host || "";
-      els.listenPort.value = dataServer.port ?? "";
-      els.remoteHost.value = dataServer.remote_host || "";
-      els.remotePort.value = dataServer.remote_port ?? "";
       els.storageEnabled.checked = Boolean(storage.enabled);
       els.storageRoot.value = storage.root || "";
-      els.storageDuration.value = storage.file_duration_seconds ?? 60;
-      els.storageStation.value = storage.station || "S0001";
+      els.storageDuration.value = storage.file_duration_seconds ?? 3600;
+      els.storageStation.value = storage.station || "NLSC";
       els.datalinkEnabled.checked = Boolean(datalink.enabled);
       els.datalinkHost.value = datalink.host || "";
       els.datalinkPort.value = datalink.port ?? "";
@@ -1255,15 +1042,9 @@
     }
 
     function updateConfigStatus(config) {
-      const dataServer = config.data_server || {};
-      const protocol = config.protocol || {};
-      const storage = config.storage || {};
-      const activeHost = dataServer.mode === "client" ? dataServer.remote_host : dataServer.host;
-      const activePort = dataServer.mode === "client" ? dataServer.remote_port : dataServer.port;
-      els.statusDeviceIp.textContent = activeHost || "-";
-      els.statusDevicePort.textContent = activePort || "-";
-      els.statusFrameHeader.textContent = protocol.frame_header ?? "-";
-      els.statusStorageRoot.textContent = storage.root || "-";
+      void config;
+      els.statusDeviceIp.textContent = "10.6.12.214";
+      els.statusDevicePort.textContent = "18080";
     }
 
     async function refreshGnssPorts() {
@@ -1296,26 +1077,19 @@
     function collectConfigPayload() {
       return {
         processing: {
-          data1_rate: readNumber(els.data1Rate, "采样率"),
+          data1_rate: readNumber(els.data1Rate, "采样率1"),
           data2_rate: readNumber(els.data2Rate, "采样率2"),
-        },
-        data_server: {
-          mode: els.dataMode.value,
-          host: els.listenHost.value.trim() || "0.0.0.0",
-          port: readNumber(els.listenPort, "本地监听端口"),
-          remote_host: els.remoteHost.value.trim() || "127.0.0.1",
-          remote_port: readNumber(els.remotePort, "设备端口"),
         },
         storage: {
           enabled: els.storageEnabled.checked,
           root: els.storageRoot.value.trim() || "E:\\data",
-          file_duration_seconds: readNumber(els.storageDuration, "单文件时长"),
-          station: els.storageStation.value.trim() || "S0001",
+          file_duration_seconds: readNumber(els.storageDuration, "文件存储时间"),
+          station: els.storageStation.value.trim() || "NLSC",
         },
         datalink: {
           enabled: els.datalinkEnabled.checked,
           host: els.datalinkHost.value.trim() || "10.2.12.61",
-          port: readNumber(els.datalinkPort, "远传端口"),
+          port: readNumber(els.datalinkPort, "远程传输端口"),
         },
         gnss: {
           enabled: els.gnssEnabled.checked,
@@ -1433,7 +1207,7 @@
       state.pollInFlight = true;
       try {
         const payload = await apiRequest(
-          `/api/monitor?mode=${encodeURIComponent(els.waveMode.value)}&window_seconds=${state.windowSeconds}&max_points=${state.maxPoints}&max_packets=${state.maxPackets}`
+          `/api/monitor?mode=${encodeURIComponent(els.waveMode.value)}&window_seconds=${state.windowSeconds}&max_points=${state.maxPoints}`
         );
         const status = payload.status || {};
         state.latestStatus = status;
@@ -1475,39 +1249,21 @@
     function updateStatus(status) {
       const processingActive = Boolean(status.processing_active);
       const dataConnected = Boolean(status.data_connected);
-      const datalinkConnected = Boolean(status.datalink_connected);
       const diskUsage = Number(status.storage_disk_usage_percent);
-      els.statusSourceRate.textContent = formatRate(status.source_sample_rate);
       els.statusData1Rate.textContent = formatRate(status.data1_rate);
       els.statusData2Rate.textContent = formatRate(status.data2_rate);
       els.statusSatellite.textContent = satelliteStatus(status);
       els.statusGnssSatellites.textContent = formatNumber(status.gnss_satellite_count);
       els.statusGnssTime.textContent = formatGnssTime(status.gnss_last_timestamp);
+      els.statusGnssClock.textContent = formatClockDifference(status.gnss_clock_difference_ns);
       els.statusGnss.textContent = status.gnss_connected ? "已连接" : (status.gnss_enabled ? "未连接" : "未启用");
-      els.statusGnssPort.textContent = status.gnss_port || "-";
-      els.statusGnssFallback.textContent = status.gnss_fallback_active ? "是" : "否";
       els.statusDiskFree.textContent = formatBytes(status.storage_disk_free_bytes);
       els.statusDiskUsage.textContent = formatPercent(status.storage_disk_usage_percent);
       els.statusStorage.textContent = status.storage_enabled ? "已启用" : "未启用";
       els.statusStorageError.textContent = status.storage_last_error || "-";
-      els.statusTransferState.textContent = processingActive ? "运行中" : "已停止";
-      els.statusDataConnection.textContent = dataConnected ? "已连接" : "未连接";
-      els.statusPackets.textContent = formatNumber(status.packets_received);
-      els.statusBytes.textContent = formatBytes(status.bytes_received);
-      els.statusDropped.textContent = formatNumber(status.frames_dropped);
-      els.statusDatalink.textContent = datalinkConnected ? "已连接" : (status.datalink_enabled ? "未连接" : "未启用");
-      els.statusDatalinkCount.textContent = formatNumber(status.datalink_packets_sent);
-      els.statusDatalinkBytes.textContent = formatBytes(status.datalink_bytes_sent);
-      els.statusDatalinkReconnects.textContent = formatNumber(status.datalink_reconnects);
-      els.statusDatalinkError.textContent = status.datalink_last_error || status.datalink_publish_last_error || "-";
-      els.statusControl.textContent = status.control_connected ? "已连接" : "未连接";
-      els.statusQueue.textContent = formatNumber(status.queue_depth);
-      els.statusLastError.textContent = status.last_error || "-";
 
       setDot(els.basicDot, dataConnected ? "ok" : (processingActive ? "warn" : ""));
-      setDot(els.transferDot, dataConnected ? "ok" : (processingActive ? "warn" : ""));
-      setDot(els.datalinkDot, datalinkConnected ? "ok" : (status.datalink_enabled ? "bad" : ""));
-      setDot(els.gnssDot, status.gnss_connected && !status.gnss_fallback_active ? "ok" : (status.gnss_enabled ? "warn" : ""));
+      setDot(els.gnssDot, status.gnss_connected ? "ok" : (status.gnss_enabled ? "warn" : ""));
       setDot(els.diskDot, !status.storage_enabled ? "" : (diskUsage >= 90 ? "bad" : (diskUsage >= 75 ? "warn" : "ok")));
 
       if (state.latestConfig) {
@@ -1518,10 +1274,8 @@
     function renderWavePayload(payload) {
       const waveform = payload.waveform || null;
       state.wavePayload = payload;
-      populateAnalysisChannelOptions(payload.channel_codes || [], waveform ? waveform.channels : 0);
       populateWaveLabels(payload.channel_codes || []);
       renderChartsFromWavePayload();
-      renderPackets(payload.recent_packets || []);
     }
 
     function populateWaveLabels(channelCodes) {
@@ -1531,27 +1285,10 @@
       }
     }
 
-    function populateAnalysisChannelOptions(channelCodes, channelCount) {
-      const count = Number(channelCount) || channelCodes.length || 0;
-      const previousAnalysis = els.analysisChannel.value;
-      const options = [];
-      for (let index = 0; index < count; index += 1) {
-        const label = channelCodes[index] ? `${index + 1} / ${channelCodes[index]}` : String(index + 1);
-        options.push(`<option value="${index}">${label}</option>`);
-      }
-      els.analysisChannel.innerHTML = options.join("");
-      if (count > 0) {
-        els.analysisChannel.value = previousAnalysis && Number(previousAnalysis) < count ? previousAnalysis : "0";
-      }
-    }
-
     function renderChartsFromWavePayload() {
       const payload = state.wavePayload;
       if (!payload || !payload.waveform) {
         state.waveCharts.forEach((chart, index) => updateChart(chart, [], `CH${index + 1}`));
-        updateChart(state.analysisTimeChart, [], "等待数据");
-        updateChart(state.analysisPsdChart, [], "等待数据");
-        els.waveSummary.textContent = "等待波形数据...";
         els.waveMeta.textContent = "-";
         return;
       }
@@ -1560,34 +1297,19 @@
       const sampleRate = Number(waveform.sample_rate) || 0;
       for (let index = 0; index < DISPLAY_CHANNEL_COUNT; index += 1) {
         const series = Array.isArray(waveform.series[index]) ? waveform.series[index] : [];
+        const chart = state.waveCharts[index];
+        if (chart) {
+          chart.options.scales.x.min = 0;
+          chart.options.scales.x.max = state.windowSeconds;
+        }
         updateChart(
-          state.waveCharts[index],
+          chart,
           seriesToTimePoints(series, sampleRate),
           `CH${index + 1}`
         );
       }
 
-      const firstSeries = Array.isArray(waveform.series[0]) ? waveform.series[0] : [];
-      els.waveSummary.textContent = firstSeries.length
-        ? `当前同时显示 CH1 至 CH${DISPLAY_CHANNEL_COUNT}，最近 ${formatWindowSeconds(waveform, firstSeries, sampleRate)}，来源 ${waveform.mode}。`
-        : "当前模式下还没有可绘制的点。";
-      els.waveMeta.textContent = `采样率 ${formatRate(sampleRate)} / 通道 ${waveform.channels} / 更新 ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
-
-      const selectedAnalysisChannel = Number(els.analysisChannel.value || "0");
-      const analysisSeries = Array.isArray(waveform.series[selectedAnalysisChannel]) ? waveform.series[selectedAnalysisChannel] : [];
-      const analysisWindow = Math.min(Number(els.analysisWindow.value || "2048"), analysisSeries.length);
-      const windowed = analysisSeries.slice(Math.max(analysisSeries.length - analysisWindow, 0));
-      updateChart(
-        state.analysisTimeChart,
-        seriesToTimePoints(windowed, sampleRate),
-        `CH ${selectedAnalysisChannel + 1}`
-      );
-      const { freqs, psd } = computePsd(windowed, sampleRate);
-      updateChart(
-        state.analysisPsdChart,
-        freqs.map((value, index) => ({ x: value, y: Math.max(psd[index], 1e-18) })),
-        `PSD CH ${selectedAnalysisChannel + 1}`
-      );
+      els.waveMeta.textContent = `更新 ${new Date((waveform.updated_at || 0) * 1000).toLocaleTimeString("zh-CN", { hour12: false })}`;
     }
 
     function updateChart(chart, data, label) {
@@ -1603,61 +1325,7 @@
       if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
         return values.map((value, index) => ({ x: index, y: value }));
       }
-      return values.map((value, index) => ({ x: (index - values.length + 1) / sampleRate, y: value }));
-    }
-
-    function formatWindowSeconds(waveform, values, sampleRate) {
-      const configured = Number(waveform.window_seconds);
-      const actual = Number.isFinite(sampleRate) && sampleRate > 0 ? values.length / sampleRate : configured;
-      const seconds = Number.isFinite(actual) && actual > 0 ? Math.min(actual, configured || actual) : configured;
-      return `${seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(2)} s`;
-    }
-
-    function computePsd(values, sampleRate) {
-      const samples = Array.isArray(values) ? values.slice() : [];
-      if (samples.length < 2 || !Number.isFinite(sampleRate) || sampleRate <= 0) {
-        return { freqs: [], psd: [] };
-      }
-      const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
-      const centered = samples.map((value) => value - mean);
-      const half = Math.floor(centered.length / 2);
-      const freqs = [];
-      const psd = [];
-      for (let k = 1; k <= half; k += 1) {
-        let re = 0;
-        let im = 0;
-        for (let t = 0; t < centered.length; t += 1) {
-          const angle = -2 * Math.PI * k * t / centered.length;
-          re += centered[t] * Math.cos(angle);
-          im += centered[t] * Math.sin(angle);
-        }
-        freqs.push(k * sampleRate / centered.length);
-        psd.push((re * re + im * im) / Math.max(centered.length * sampleRate, 1e-9));
-      }
-      return { freqs, psd };
-    }
-
-    function renderPackets(packets) {
-      if (Date.now() - state.packetsClearedAt < state.refreshMs) {
-        return;
-      }
-      if (!Array.isArray(packets) || packets.length === 0) {
-        els.packetsConsole.textContent = "暂无原始包。";
-        return;
-      }
-      els.packetsConsole.textContent = packets.map((packet, index) => {
-        const lines = [
-          `#${index + 1}`,
-          `received_at: ${new Date((packet.received_at || 0) * 1000).toLocaleString("zh-CN", { hour12: false })}`,
-          `sample_rate: ${packet.sample_rate}`,
-          `payload_bytes: ${packet.payload_bytes}`,
-          `raw_bytes: ${packet.raw_bytes}`,
-          packet.truncated_bytes ? `truncated_bytes: ${packet.truncated_bytes}` : "truncated_bytes: 0",
-          "",
-          packet.hex_dump || "<empty>",
-        ];
-        return lines.join("\n");
-      }).join("\n\n" + "-".repeat(96) + "\n\n");
+      return values.map((value, index) => ({ x: index / sampleRate, y: value }));
     }
 
     function copyDownloadInfo() {
@@ -1672,8 +1340,8 @@
       bindEvents();
       loadConnectionPreset();
       state.refreshMs = Number(els.refreshMs.value);
-      state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 120);
-      state.maxPackets = Number(els.maxPackets.value);
+      state.windowSeconds = clamp(Number(els.waveWindowSeconds.value), 1, 20);
+      els.waveWindowSeconds.value = String(state.windowSeconds);
       updateFormState();
       const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
       if (hasHttpOrigin && window.location.port) {

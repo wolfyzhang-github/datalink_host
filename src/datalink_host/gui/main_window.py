@@ -128,7 +128,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self._runtime = runtime
         self._settings = settings
-        self._data_mode = "raw"
+        self._data_mode = "data1"
         self._status_labels: dict[str, list[QtWidgets.QLabel]] = {}
         self._status_lamps: dict[str, list[IndicatorLamp]] = {}
         self._plots: list[pg.PlotDataItem | None] = [None] * self._settings.protocol.channels
@@ -265,82 +265,19 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(container)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(
-            self._build_page_intro(
-                "设备基本状态",
-                "显示设备运行、数据传输、远传、GNSS 和硬盘容量的关键状态。",
-            )
-        )
+        layout.addWidget(self._build_page_intro("设备基本状态", "只保留现场最常看的设备信息。"))
 
         grid = QtWidgets.QGridLayout()
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(16)
         cards = [
-            self._build_status_card(
-                "数据传输情况",
-                "data_connected",
-                "source_sample_rate",
-                "当前采样率",
-                [
-                    ("processing_active", "接收状态"),
-                    ("data_connected", "设备连接"),
-                ],
-            ),
-            self._build_status_card(
-                "远程传输连接",
-                "datalink_connected",
-                "datalink_connected",
-                "连接状态",
-                [
-                    ("datalink_packets_sent", "远传数量"),
-                    ("datalink_reconnects", "重连次数"),
-                ],
-            ),
-            self._build_status_card(
-                "传输数量",
-                "data_connected",
-                "packets_received",
-                "接收包数",
-                [
-                    ("bytes_received", "接收字节"),
-                    ("datalink_bytes_sent", "远传字节"),
-                ],
-            ),
-            self._build_status_card(
-                "卫星状态",
-                "gnss_connected",
-                "satellite_status",
-                "GNSS 状态",
-                [
-                    ("gnss_satellite_count", "卫星数"),
-                    ("gnss_connected", "授时连接"),
-                    ("gnss_fallback_active", "回退状态"),
-                ],
-            ),
-            self._build_status_card(
-                "GNSS 时间",
-                "gnss_connected",
-                "gnss_last_timestamp",
-                "当前时间",
-                [
-                    ("gnss_enabled", "GNSS 开关"),
-                    ("gnss_port", "GNSS 端口"),
-                ],
-            ),
-            self._build_status_card(
-                "硬盘剩余容量",
-                "storage_enabled",
-                "storage_disk_free_bytes",
-                "可用容量",
-                [
-                    ("storage_disk_usage_percent", "磁盘占用"),
-                    ("storage_enabled", "存储状态"),
-                ],
-            ),
+            self._build_basic_info_card(container),
+            self._build_gnss_status_card(container),
+            self._build_storage_status_card(container),
         ]
         for index, card in enumerate(cards):
-            grid.addWidget(card, index // 2, index % 2)
-        for column in range(2):
+            grid.addWidget(card, 0, index)
+        for column in range(3):
             grid.setColumnStretch(column, 1)
         layout.addLayout(grid)
         layout.addStretch(1)
@@ -357,35 +294,17 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(container)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(
-            self._build_page_intro(
-                "设备参数设置",
-                "仅保留常用工作参数，其他高级项集中在“其他调试功能”。",
-            )
-        )
+        layout.addWidget(self._build_page_intro("设备参数设置", "常用参数、文件存储和远程传输都在这里。"))
 
-        card = self._panel_card("常用参数", container)
-        card_layout = QtWidgets.QFormLayout(card)
-        card_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-
-        self._data1_rate_spin = QtWidgets.QDoubleSpinBox(card)
-        self._data1_rate_spin.setRange(0.1, 10000.0)
-        self._data1_rate_spin.setDecimals(2)
-        self._data1_rate_spin.setSuffix(" Hz")
-
-        self._data2_rate_spin = QtWidgets.QDoubleSpinBox(card)
-        self._data2_rate_spin.setRange(0.1, 10000.0)
-        self._data2_rate_spin.setDecimals(2)
-        self._data2_rate_spin.setSuffix(" Hz")
-
-        self._storage_station_edit = QtWidgets.QLineEdit(card)
-        self._storage_station_edit.setPlaceholderText("输入保存文件名")
-        self._storage_station_edit.setToolTip("该名称会作为数据文件名中的主要标识。")
-
-        card_layout.addRow("采样率1", self._data1_rate_spin)
-        card_layout.addRow("采样率2", self._data2_rate_spin)
-        card_layout.addRow("文件名", self._storage_station_edit)
-        layout.addWidget(card)
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(16)
+        grid.addWidget(self._build_common_settings_card(container), 0, 0)
+        grid.addWidget(self._build_storage_settings_card(container), 0, 1)
+        grid.addWidget(self._build_remote_settings_card(container), 1, 0)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
         layout.addStretch(1)
 
         scroll.setWidget(container)
@@ -440,19 +359,13 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(
-            self._build_page_intro(
-                "维护工具",
-                "高级配置、队列、日志和远程接口集中在这里，便于现场维护。",
-            )
-        )
+        layout.addWidget(self._build_page_intro("维护工具", "保留 GNSS 和日志，其余调试项已收起。"))
 
-        tabs = QtWidgets.QTabWidget(widget)
-        tabs.setDocumentMode(True)
-        tabs.addTab(self._build_advanced_settings_tab(), "高级配置")
-        tabs.addTab(self._build_status_tab(), "队列与日志")
-        tabs.addTab(self._build_remote_tab(), "远传接口")
-        layout.addWidget(tabs, stretch=1)
+        content = QtWidgets.QHBoxLayout()
+        content.setSpacing(16)
+        content.addWidget(self._build_gnss_panel(), stretch=3)
+        content.addWidget(self._build_status_tab(), stretch=5)
+        layout.addLayout(content)
         return widget
 
     def _build_advanced_settings_tab(self) -> QtWidgets.QWidget:
@@ -487,12 +400,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(
-            self._build_page_intro(
-                "波形显示",
-                "支持 CH1 至 CH6 的多通道波形显示，可在不同数据源之间切换。",
-            )
-        )
 
         workspace = QtWidgets.QFrame(widget)
         workspace.setObjectName("workspace")
@@ -508,8 +415,6 @@ class MainWindow(QtWidgets.QMainWindow):
         toolbar.addWidget(self._create_plot_window_seconds_spin(workspace))
         toolbar.addWidget(self._create_waveform_reset_button(workspace))
         toolbar.addStretch(1)
-        toolbar.addWidget(QtWidgets.QLabel("当前源采样率", workspace))
-        toolbar.addWidget(self._create_snapshot_label("source_sample_rate", workspace))
         workspace_layout.addLayout(toolbar)
 
         grid = QtWidgets.QGridLayout()
@@ -531,82 +436,6 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(16)
-        layout.addWidget(
-            self._build_page_intro(
-                "状态监控",
-                "集中查看数据链路、处理队列、本地存储、远传发布和 GNSS 状态，顶部使用条形进度显示队列压力。",
-            )
-        )
-
-        top = QtWidgets.QFrame(widget)
-        top.setObjectName("workspace")
-        top_layout = QtWidgets.QGridLayout(top)
-        top_layout.setContentsMargins(18, 18, 18, 18)
-        top_layout.setSpacing(16)
-        top_layout.addWidget(
-            self._build_queue_card(
-                "实时处理队列",
-                "processing",
-                PROCESSING_QUEUE_CAPACITY,
-                "data_connected",
-                [
-                    ("source_sample_rate", "源采样率"),
-                    ("packets_received", "已收包数"),
-                    ("frames_dropped", "处理丢帧"),
-                ],
-            ),
-            0,
-            0,
-        )
-        top_layout.addWidget(
-            self._build_queue_card(
-                "本地存储队列",
-                "storage",
-                STORAGE_QUEUE_CAPACITY,
-                "storage_enabled",
-                [
-                    ("storage_disk_usage_percent", "磁盘利用率"),
-                    ("storage_disk_free_bytes", "磁盘可用"),
-                    ("storage_frames_dropped", "存储丢帧"),
-                    ("storage_last_error", "存储错误"),
-                ],
-            ),
-            0,
-            1,
-        )
-        top_layout.addWidget(
-            self._build_queue_card(
-                "远传发布队列",
-                "datalink",
-                DATALINK_QUEUE_CAPACITY,
-                "datalink_connected",
-                [
-                    ("datalink_packets_sent", "已发包数"),
-                    ("datalink_reconnects", "远传重连"),
-                    ("datalink_publish_last_error", "发布错误"),
-                ],
-            ),
-            1,
-            0,
-        )
-        top_layout.addWidget(
-            self._build_summary_card(
-                "运行摘要",
-                [
-                    ("control_connected", "控制连接"),
-                    ("gnss_connected", "GNSS 连接"),
-                    ("bytes_received", "已收字节"),
-                    ("datalink_bytes_sent", "已发字节"),
-                    ("last_error", "最近错误"),
-                ],
-            ),
-            1,
-            1,
-        )
-        top_layout.setColumnStretch(0, 1)
-        top_layout.setColumnStretch(1, 1)
-        layout.addWidget(top, stretch=3)
-
         log_card = self._panel_card("运行日志", widget)
         log_layout = QtWidgets.QVBoxLayout(log_card)
         controls = QtWidgets.QHBoxLayout()
@@ -620,7 +449,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_view = QtWidgets.QPlainTextEdit(log_card)
         self._log_view.setReadOnly(True)
         log_layout.addWidget(self._log_view, stretch=1)
-        layout.addWidget(log_card, stretch=2)
+        layout.addWidget(log_card, stretch=1)
         return widget
 
     def _build_remote_tab(self) -> QtWidgets.QWidget:
@@ -740,6 +569,122 @@ class MainWindow(QtWidgets.QMainWindow):
         form = QtWidgets.QFormLayout()
         for field_key, field_label in fields:
             form.addRow(field_label, self._create_snapshot_label(field_key, card))
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_basic_info_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("基本信息", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("设备 IP", self._static_value_label("10.6.12.214", card))
+        form.addRow("设备端口", self._static_value_label("18080", card))
+        form.addRow("采样率1", self._create_snapshot_label("data1_rate", card))
+        form.addRow("采样率2", self._create_snapshot_label("data2_rate", card))
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_gnss_status_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("GNSS 状态", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("卫星状态", self._create_snapshot_label("satellite_status", card))
+        form.addRow("卫星数", self._create_snapshot_label("gnss_satellite_count", card))
+        form.addRow("GNSS 时间", self._create_snapshot_label("gnss_last_timestamp", card))
+        form.addRow("钟差", self._create_snapshot_label("gnss_clock_difference_ns", card))
+        form.addRow("GNSS 连接", self._create_snapshot_label("gnss_connected", card))
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_storage_status_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("磁盘状态", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("硬盘剩余容量", self._create_snapshot_label("storage_disk_free_bytes", card))
+        form.addRow("磁盘利用率", self._create_snapshot_label("storage_disk_usage_percent", card))
+        form.addRow("存储状态", self._create_snapshot_label("storage_enabled", card))
+        form.addRow("存储错误", self._create_snapshot_label("storage_last_error", card))
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_common_settings_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("常用参数", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        self._data1_rate_spin = QtWidgets.QDoubleSpinBox(card)
+        self._data1_rate_spin.setRange(0.1, 10000.0)
+        self._data1_rate_spin.setDecimals(2)
+        self._data1_rate_spin.setSuffix(" Hz")
+
+        self._data2_rate_spin = QtWidgets.QDoubleSpinBox(card)
+        self._data2_rate_spin.setRange(0.1, 10000.0)
+        self._data2_rate_spin.setDecimals(2)
+        self._data2_rate_spin.setSuffix(" Hz")
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("采样率1", self._data1_rate_spin)
+        form.addRow("采样率2", self._data2_rate_spin)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_storage_settings_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("文件存储", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        self._storage_enabled_checkbox = QtWidgets.QCheckBox("启用文件存储", card)
+        self._storage_enabled_checkbox.toggled.connect(self._update_form_state)
+        self._storage_root_edit = QtWidgets.QLineEdit(card)
+        self._storage_browse_button = QtWidgets.QPushButton("浏览...", card)
+        self._storage_browse_button.clicked.connect(self._choose_storage_root)
+        self._storage_duration_spin = QtWidgets.QSpinBox(card)
+        self._storage_duration_spin.setRange(60, 86400)
+        self._storage_duration_spin.setSingleStep(60)
+        self._storage_duration_spin.setSuffix(" s")
+        self._storage_station_edit = QtWidgets.QLineEdit(card)
+        self._storage_station_edit.setPlaceholderText("NLSC")
+
+        path_row = QtWidgets.QHBoxLayout()
+        path_row.addWidget(self._storage_root_edit, stretch=1)
+        path_row.addWidget(self._storage_browse_button)
+        path_widget = QtWidgets.QWidget(card)
+        path_widget.setLayout(path_row)
+
+        layout.addWidget(self._storage_enabled_checkbox)
+        form = QtWidgets.QFormLayout()
+        form.addRow("存储路径", path_widget)
+        form.addRow("文件存储时间", self._storage_duration_spin)
+        form.addRow("文件存储名", self._storage_station_edit)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_remote_settings_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("远程传输", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        self._datalink_enabled_checkbox = QtWidgets.QCheckBox("启用远程传输", card)
+        self._datalink_enabled_checkbox.toggled.connect(self._update_form_state)
+        self._datalink_host_edit = QtWidgets.QLineEdit(card)
+        self._datalink_port_spin = QtWidgets.QSpinBox(card)
+        self._datalink_port_spin.setRange(1, 65535)
+
+        layout.addWidget(self._datalink_enabled_checkbox)
+        form = QtWidgets.QFormLayout()
+        form.addRow("远程 IP", self._datalink_host_edit)
+        form.addRow("远程端口", self._datalink_port_spin)
         layout.addLayout(form)
         layout.addStretch(1)
         return card
@@ -917,7 +862,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gnss_last_error_label = _status_value_label(card)
         runtime_form.addRow("UTC 时间", self._gnss_last_timestamp_label)
         runtime_form.addRow("最近错误", self._gnss_last_error_label)
-        runtime_form.addRow("回退模式", self._create_snapshot_label("gnss_fallback_active", card))
         layout.addLayout(runtime_form)
         layout.addStretch(1)
         return card
@@ -1028,7 +972,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _create_mode_selector(self, parent: QtWidgets.QWidget) -> QtWidgets.QComboBox:
         combo = QtWidgets.QComboBox(parent)
-        combo.addItem("原始数据", "raw")
         combo.addItem("降采样1", "data1")
         combo.addItem("降采样2", "data2")
         combo.setCurrentIndex(0)
@@ -1038,11 +981,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _create_plot_window_seconds_spin(self, parent: QtWidgets.QWidget) -> QtWidgets.QDoubleSpinBox:
         spin = QtWidgets.QDoubleSpinBox(parent)
-        spin.setRange(1.0, self._settings.gui.plot_history_seconds)
+        spin.setRange(1.0, 20.0)
         spin.setDecimals(0)
         spin.setSingleStep(5.0)
         spin.setSuffix(" s")
-        spin.setValue(self._settings.gui.plot_window_seconds)
+        spin.setValue(min(self._settings.gui.plot_window_seconds, 20.0))
         spin.valueChanged.connect(
             lambda value: setattr(self._settings.gui, "plot_window_seconds", float(value))
         )
@@ -1098,11 +1041,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         assert self._data1_rate_spin is not None
         assert self._data2_rate_spin is not None
-        assert self._data_server_mode_combo is not None
-        assert self._data_host_edit is not None
-        assert self._data_port_spin is not None
-        assert self._data_remote_host_edit is not None
-        assert self._data_remote_port_spin is not None
         assert self._storage_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
@@ -1115,19 +1053,12 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._gnss_baudrate_spin is not None
 
         processing = config["processing"]
-        data_server = config["data_server"]
         storage = config["storage"]
         datalink = config["datalink"]
         gnss = config["gnss"]
 
         self._data1_rate_spin.setValue(processing["data1_rate"])
         self._data2_rate_spin.setValue(processing["data2_rate"])
-
-        self._data_server_mode_combo.setCurrentIndex(0 if data_server["mode"] == "client" else 1)
-        self._data_host_edit.setText(data_server["host"])
-        self._data_port_spin.setValue(data_server["port"])
-        self._data_remote_host_edit.setText(data_server["remote_host"])
-        self._data_remote_port_spin.setValue(data_server["remote_port"])
 
         self._storage_enabled_checkbox.setChecked(storage["enabled"])
         self._storage_root_edit.setText(storage["root"])
@@ -1205,46 +1136,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gnss_port_combo.blockSignals(False)
 
     def _update_form_state(self) -> None:
-        if self._data_server_mode_combo is None:
-            return
-        client_mode = self._data_server_mode_combo.currentData() == "client"
-        server_mode = not client_mode
-
-        assert self._data_host_edit is not None
-        assert self._data_port_spin is not None
-        assert self._data_remote_host_edit is not None
-        assert self._data_remote_port_spin is not None
-        assert self._connection_mode_hint_label is not None
-
-        self._data_host_edit.setEnabled(server_mode)
-        self._data_port_spin.setEnabled(server_mode)
-        self._data_remote_host_edit.setEnabled(client_mode)
-        self._data_remote_port_spin.setEnabled(client_mode)
-        if client_mode:
-            self._connection_mode_hint_label.setText(
-                "当前为主动连接设备模式：系统会主动连接“设备地址/设备端口”；本地监听地址与端口仅作为保留配置。"
+        if self._storage_enabled_checkbox is not None:
+            self._set_section_enabled(
+                self._storage_enabled_checkbox.isChecked(),
+                [
+                    self._storage_root_edit,
+                    self._storage_browse_button,
+                    self._storage_duration_spin,
+                    self._storage_station_edit,
+                ],
             )
-        else:
-            self._connection_mode_hint_label.setText(
-                "当前为监听设备连接模式：系统会在“本地监听地址/端口”等待设备主动接入。"
+        if self._datalink_enabled_checkbox is not None:
+            self._set_section_enabled(
+                self._datalink_enabled_checkbox.isChecked(),
+                [
+                    self._datalink_host_edit,
+                    self._datalink_port_spin,
+                ],
             )
-
-        self._set_section_enabled(
-            True,
-            [
-                self._storage_root_edit,
-                self._storage_browse_button,
-                self._storage_duration_spin,
-                self._storage_station_edit,
-            ],
-        )
-        self._set_section_enabled(
-            True,
-            [
-                self._datalink_host_edit,
-                self._datalink_port_spin,
-            ],
-        )
         self._set_section_enabled(
             self._gnss_enabled_checkbox.isChecked() if self._gnss_enabled_checkbox is not None else False,
             [
@@ -1284,11 +1193,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_runtime_config(self) -> None:
         assert self._data1_rate_spin is not None
         assert self._data2_rate_spin is not None
-        assert self._data_server_mode_combo is not None
-        assert self._data_host_edit is not None
-        assert self._data_port_spin is not None
-        assert self._data_remote_host_edit is not None
-        assert self._data_remote_port_spin is not None
         assert self._storage_enabled_checkbox is not None
         assert self._storage_root_edit is not None
         assert self._storage_duration_spin is not None
@@ -1305,18 +1209,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 "data1_rate": self._data1_rate_spin.value(),
                 "data2_rate": self._data2_rate_spin.value(),
             },
-            "data_server": {
-                "mode": self._data_server_mode_combo.currentData(),
-                "host": self._data_host_edit.text().strip() or "0.0.0.0",
-                "port": self._data_port_spin.value(),
-                "remote_host": self._data_remote_host_edit.text().strip() or "127.0.0.1",
-                "remote_port": self._data_remote_port_spin.value(),
-            },
             "storage": {
                 "enabled": self._storage_enabled_checkbox.isChecked(),
                 "root": self._storage_root_edit.text().strip() or r"E:\data",
                 "file_duration_seconds": self._storage_duration_spin.value(),
-                "station": self._storage_station_edit.text().strip() or "S0001",
+                "station": self._storage_station_edit.text().strip() or "NLSC",
             },
             "datalink": {
                 "enabled": self._datalink_enabled_checkbox.isChecked(),
@@ -1367,7 +1264,7 @@ class MainWindow(QtWidgets.QMainWindow):
             and sample_rate is not None
             and sample_rate > 0
         ):
-            x_values = (np.arange(data.shape[1]) - data.shape[1] + 1) / sample_rate
+            x_values = np.arange(data.shape[1]) / sample_rate
         for index, curve in enumerate(self._plots):
             if curve is None:
                 continue
@@ -1375,6 +1272,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 curve.setData([])
                 continue
             curve.setData(x_values if x_values is not None else np.arange(data.shape[1]), data[index])
+            plot = self._plot_widgets[index]
+            if plot is not None:
+                plot.setXRange(0, self._settings.gui.plot_window_seconds, padding=0)
         self._update_logs()
 
     @staticmethod
@@ -1400,8 +1300,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return text
         return (
             f"{text[0:4]}-{text[4:6]}-{text[6:8]} "
-            f"{text[8:10]}:{text[10:12]}:{text[12:14]}.{text[14:20]}"
+            f"{text[8:10]}:{text[10:12]}:{text[12:14]}.{text[14:17]}"
         )
+
+    @staticmethod
+    def _format_clock_difference(value: int | None) -> str:
+        return "-" if value is None else f"{value} ns"
 
     def _update_status(self, snapshot: RuntimeSnapshot) -> None:
         processing_active = self._runtime.is_processing_active()
@@ -1448,6 +1352,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "gnss_connected": "已连接" if snapshot.gnss_connected else "未连接",
             "satellite_status": satellite_status,
             "gnss_satellite_count": "-" if snapshot.gnss_satellite_count is None else f"{snapshot.gnss_satellite_count:d}",
+            "gnss_clock_difference_ns": self._format_clock_difference(snapshot.gnss_clock_difference_ns),
             "gnss_mode": snapshot.gnss_mode,
             "gnss_port": snapshot.gnss_port or "-",
             "gnss_last_timestamp": self._format_gnss_timestamp(snapshot.gnss_last_timestamp),
@@ -1571,13 +1476,11 @@ class MainWindow(QtWidgets.QMainWindow):
             effective_rate = sample_rate / step if sample_rate is not None and sample_rate > 0 else sample_rate
             return plotted, effective_rate
 
-        if self._data_mode == "raw":
-            return window(snapshot.latest_raw, snapshot.source_sample_rate)
         if self._data_mode == "data1":
             return window(snapshot.latest_data1, snapshot.data1_rate)
         if self._data_mode == "data2":
             return window(snapshot.latest_data2, snapshot.data2_rate)
-        return window(snapshot.latest_raw, snapshot.source_sample_rate)
+        return window(snapshot.latest_data1, snapshot.data1_rate)
 
     def _plot_window_points(self, sample_rate: float | None) -> int:
         seconds = (

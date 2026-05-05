@@ -53,6 +53,7 @@ def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
         "gnss_port": snapshot.gnss_port,
         "gnss_baudrate": snapshot.gnss_baudrate,
         "gnss_satellite_count": snapshot.gnss_satellite_count,
+        "gnss_clock_difference_ns": snapshot.gnss_clock_difference_ns,
         "gnss_last_timestamp": snapshot.gnss_last_timestamp,
         "gnss_last_error": snapshot.gnss_last_error,
         "gnss_fallback_active": snapshot.gnss_fallback_active,

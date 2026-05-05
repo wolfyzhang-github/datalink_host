@@ -562,9 +562,9 @@ class ProtocolTests(unittest.TestCase):
 
             data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
             self.assertTrue(data1_files)
-            expected_name = "SC.S0001.20231114221320123.R.10.HSH.mseed"
+            expected_name = "SC.NLSC.20231114221320123.R.10.HSH.mseed"
             self.assertEqual(expected_name, data1_files[0].name)
-            log_file = Path(tmpdir) / "log" / "SC.S0001.20231114221320123.R.10.LOG.log"
+            log_file = Path(tmpdir) / "log" / "SC.NLSC.20231114221320123.R.10.LOG.log"
             self.assertTrue(log_file.is_file())
             self.assertIn("# MiniSEED sidecar log", log_file.read_text(encoding="utf-8"))
             stream = read(str(data1_files[0]))
@@ -679,9 +679,9 @@ class ProtocolTests(unittest.TestCase):
             log_dir = root / "log"
             old_dir.mkdir()
             log_dir.mkdir()
-            old_mseed = old_dir / "SC.S0001.20200101000000000.R.10.HSH.mseed"
-            old_log = old_dir / "SC.S0001.20200101000000000.R.10.LOG.log"
-            shared_old_log = log_dir / "SC.S0001.20200101000000000.R.10.LOG.log"
+            old_mseed = old_dir / "SC.NLSC.20200101000000000.R.10.HSH.mseed"
+            old_log = old_dir / "SC.NLSC.20200101000000000.R.10.LOG.log"
+            shared_old_log = log_dir / "SC.NLSC.20200101000000000.R.10.LOG.log"
             old_mseed.write_bytes(b"old")
             old_log.write_text("old log\n", encoding="utf-8")
             shared_old_log.write_text("shared old log\n", encoding="utf-8")
@@ -761,7 +761,7 @@ class ProtocolTests(unittest.TestCase):
         for payload, stream_id, start_time, end_time in packets:
             packet = publisher._encode_packet(f"WRITE {stream_id} 1 2 A {len(payload)}", payload)  # type: ignore[attr-defined]
             self.assertTrue(packet.startswith(b"DL"))
-            self.assertEqual("SC_S0001_10_HSH/MSEED", stream_id)
+            self.assertEqual("SC_NLSC_10_HSH/MSEED", stream_id)
             self.assertGreater(len(payload), 0)
             self.assertLess(start_time, end_time)
             self.assertEqual(len(payload), publisher._extract_data_size(f"WRITE {stream_id} 1 2 A {len(payload)}"))  # type: ignore[attr-defined]
@@ -1175,7 +1175,7 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as excinfo:
             publisher._write_packet_locked(  # type: ignore[attr-defined]
                 PendingDataLinkPacket(
-                    stream_id="SC_S0001_10_HSH/MSEED",
+                    stream_id="SC_NLSC_10_HSH/MSEED",
                     payload=b"x" * 512,
                     start_time=1_700_000_000.0,
                     end_time=1_700_000_001.0,
@@ -1204,7 +1204,7 @@ class ProtocolTests(unittest.TestCase):
         publisher._write_packet_locked = _write  # type: ignore[method-assign]
         publisher._enqueue_packet(
             PendingDataLinkPacket(
-                stream_id="SC_S0001_10_HSH/MSEED",
+                stream_id="SC_NLSC_10_HSH/MSEED",
                 payload=b"x" * 256,
                 start_time=1_700_000_000.0,
                 end_time=1_700_000_000.5,
@@ -1213,7 +1213,7 @@ class ProtocolTests(unittest.TestCase):
         )
         publisher._enqueue_packet(
             PendingDataLinkPacket(
-                stream_id="SC_S0001_10_HSZ/MSEED",
+                stream_id="SC_NLSC_10_HSZ/MSEED",
                 payload=b"y" * 256,
                 start_time=1_700_000_000.5,
                 end_time=1_700_000_001.0,
@@ -1223,7 +1223,7 @@ class ProtocolTests(unittest.TestCase):
 
         self.assertTrue(sent.wait(0.2))
         self.assertEqual(
-            ["SC_S0001_10_HSH/MSEED", "SC_S0001_10_HSZ/MSEED"],
+            ["SC_NLSC_10_HSH/MSEED", "SC_NLSC_10_HSZ/MSEED"],
             calls[:2],
         )
         publisher.close()
@@ -1246,7 +1246,7 @@ class ProtocolTests(unittest.TestCase):
         publisher._write_packet_locked = _flaky_write  # type: ignore[method-assign]
         publisher._enqueue_packet(
             PendingDataLinkPacket(
-                stream_id="SC_S0001_10_HSH/MSEED",
+                stream_id="SC_NLSC_10_HSH/MSEED",
                 payload=b"x" * 512,
                 start_time=1_700_000_000.0,
                 end_time=1_700_000_001.0,
@@ -1302,6 +1302,14 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual("20260429075208253121", format_timestamp_us(status.last_timestamp_us))
         self.assertEqual(7, status.satellite_count)
         self.assertEqual(3, status.clock_difference_ns)
+
+    def test_gnss_service_parses_satellite_count_with_serial_prefix_noise(self) -> None:
+        self.assertEqual(
+            7,
+            GnssTimeService._parse_satellite_count(
+                "[2026-05-06 01:26:36.483]# RECV ASCII/129 <<< $GBGGA,152553.00,4001.12329487,N,11610.20880656,E,7,07,2.37,212.4017,M,-7.7918,M,,*57"
+            ),
+        )
 
     def test_runtime_does_not_warn_on_expected_frame_period_wait(self) -> None:
         self.assertFalse(
@@ -1417,6 +1425,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=None,
                 last_timestamp_us=1_700_000_000_000_000,
                 last_error=None,
             )
@@ -1509,6 +1518,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=None,
                 last_timestamp_us=1_700_000_240_000_000,
                 last_error=None,
             )
@@ -1540,6 +1550,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=None,
                 last_timestamp_us=None,
                 last_error="gnss offline",
             )
@@ -1578,6 +1589,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=None,
                 last_timestamp_us=None,
                 last_error=None,
             )
@@ -1615,6 +1627,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=None,
                 last_timestamp_us=None,
                 last_error=None,
             )
@@ -1716,6 +1729,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=None,
                 last_timestamp_us=1_700_000_001_000_000,
                 last_error=None,
             )
@@ -1751,6 +1765,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem",
                 baudrate=115200,
                 poll_interval_seconds=0.2,
+                clock_difference_ns=None,
                 last_timestamp_us=1_700_000_001_000_000,
                 last_error=None,
             )
@@ -1804,6 +1819,7 @@ class ProtocolTests(unittest.TestCase):
                 port="tty.usbmodem1101",
                 baudrate=115200,
                 poll_interval_seconds=0.1,
+                clock_difference_ns=3,
                 last_timestamp_us=None,
                 last_error=None,
                 satellite_count=6,
@@ -1817,6 +1833,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(200, status_response.status_code)
             self.assertEqual("ok", status_response.json()["status"])
             self.assertEqual(6, status_response.json()["payload"]["gnss_satellite_count"])
+            self.assertEqual(3, status_response.json()["payload"]["gnss_clock_difference_ns"])
 
             ports_response = client.get("/api/gnss/ports")
             self.assertEqual(200, ports_response.status_code)

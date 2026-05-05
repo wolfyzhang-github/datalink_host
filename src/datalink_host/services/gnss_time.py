@@ -25,7 +25,7 @@ _DEPLOY_PATTERN = re.compile(r"^(?P<stamp>\d{14})(?P<fraction>\d{6})$")
 _DEPLOY_DOTTED_PATTERN = re.compile(
     r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<clock>\d{2}:\d{2}:\d{2})\.(?P<fraction>\d{6})$"
 )
-_GGA_SATELLITE_PATTERN = re.compile(r"^[\$*]?(?P<sentence>[A-Z0-9]{2,5}GGA),")
+_GGA_SATELLITE_PATTERN = re.compile(r"(?P<sentence>[A-Z0-9]{2,5}GGA),")
 _PHASE_PATTERN = re.compile(r"^[\$#]Phase,\s*(?P<value>[-+]?\d+)\s*ns$", re.IGNORECASE)
 
 
@@ -400,13 +400,15 @@ class GnssTimeService:
 
     @staticmethod
     def _parse_satellite_count(raw_value: str) -> int | None:
-        value = raw_value.strip().lstrip("$*")
+        value = raw_value.strip()
         if not value:
             return None
-        match = _GGA_SATELLITE_PATTERN.match(value)
+        match = _GGA_SATELLITE_PATTERN.search(value)
         if match is None:
             return None
-        parts = value.split(",")
+        sentence_start = match.start()
+        sentence = value[sentence_start:]
+        parts = sentence.split(",")
         if len(parts) <= 7:
             return None
         satellite_field = parts[7].strip()
@@ -419,7 +421,7 @@ class GnssTimeService:
 
     @staticmethod
     def _parse_clock_difference_ns(raw_value: str) -> int | None:
-        match = _PHASE_PATTERN.fullmatch(raw_value.strip())
+        match = _PHASE_PATTERN.search(raw_value.strip())
         if match is None:
             return None
         try:

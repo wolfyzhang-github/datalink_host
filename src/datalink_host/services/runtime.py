@@ -131,6 +131,7 @@ class RuntimeService:
             gnss_port=settings.gnss.port,
             gnss_baudrate=settings.gnss.baudrate,
             gnss_satellite_count=None,
+            gnss_clock_difference_ns=None,
             gnss_last_timestamp=None,
             gnss_last_error=None,
             gnss_fallback_active=False,
@@ -285,6 +286,7 @@ class RuntimeService:
                 gnss_port=self._settings.gnss.port,
                 gnss_baudrate=self._settings.gnss.baudrate,
                 gnss_satellite_count=gnss_status.satellite_count,
+                gnss_clock_difference_ns=gnss_status.clock_difference_ns,
                 gnss_last_timestamp=gnss_last_timestamp,
                 gnss_last_error=gnss_last_error,
             )
@@ -1109,6 +1111,7 @@ class RuntimeService:
                     "gnss_port": snapshot.gnss_port,
                     "gnss_baudrate": snapshot.gnss_baudrate,
                     "gnss_satellite_count": snapshot.gnss_satellite_count,
+                    "gnss_clock_difference_ns": snapshot.gnss_clock_difference_ns,
                     "gnss_last_timestamp": snapshot.gnss_last_timestamp,
                     "gnss_last_error": snapshot.gnss_last_error,
                     "gnss_fallback_active": snapshot.gnss_fallback_active,
