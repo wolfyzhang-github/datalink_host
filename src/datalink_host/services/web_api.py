@@ -92,7 +92,7 @@ def create_app(runtime: RuntimeService) -> FastAPI:
     async def update_config(request: Request) -> dict[str, Any]:
         payload = await request.json()
         try:
-            updated = runtime.update_config(payload)
+            updated = runtime.apply_config(payload)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"status": "ok", "payload": updated}

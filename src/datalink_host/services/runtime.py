@@ -642,6 +642,20 @@ class RuntimeService:
         self._ensure_gnss_port_selected()
         return self.current_config()
 
+    def apply_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        was_active = self.is_processing_active()
+        if was_active:
+            self.pause_processing()
+        try:
+            updated = self.update_config(payload)
+        except Exception:
+            if was_active and self._runtime_started and not self.is_processing_active():
+                self.resume_processing()
+            raise
+        if was_active and self._runtime_started:
+            self.resume_processing()
+        return updated
+
     def _ensure_gnss_port_selected(self) -> None:
         with self._lock:
             should_select = self._settings.gnss.enabled and not self._settings.gnss.port.strip()

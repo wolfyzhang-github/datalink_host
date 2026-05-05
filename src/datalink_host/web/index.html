@@ -960,7 +960,7 @@
           method: "POST",
           body: JSON.stringify(collectConfigPayload()),
         });
-        setAlert("配置已应用。", "success");
+        setAlert("配置已应用并重启接收。", "success");
         await loadConfigIntoForm();
         await refreshMonitor();
       } catch (error) {

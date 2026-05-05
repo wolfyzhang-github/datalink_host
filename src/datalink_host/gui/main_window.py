@@ -1186,9 +1186,9 @@ class MainWindow(QtWidgets.QMainWindow):
             },
         }
         try:
-            self._runtime.update_config(payload)
-            self._set_feedback("配置已应用。")
-            self.statusBar().showMessage("配置已应用", 3000)
+            self._runtime.apply_config(payload)
+            self._set_feedback("配置已应用并重启接收。")
+            self.statusBar().showMessage("配置已应用并重启接收", 3000)
             self._update_processing_controls()
         except Exception as exc:  # noqa: BLE001
             self._set_feedback(f"应用失败: {exc}", is_error=True)

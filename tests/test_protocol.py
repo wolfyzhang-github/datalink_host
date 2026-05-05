@@ -289,6 +289,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(runtime.is_processing_active())
         self.assertEqual(0, runtime.snapshot().queue_depth)
 
+    def test_runtime_apply_config_restarts_active_processing(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime._data_server = Mock()
+        runtime._data_server_active = True
+        runtime._runtime_started = True
+        runtime.pause_processing = Mock()  # type: ignore[method-assign]
+        runtime.resume_processing = Mock()  # type: ignore[method-assign]
+        runtime.update_config = Mock(return_value={"processing": {"data1_rate": 125.0}})  # type: ignore[method-assign]
+
+        updated = runtime.apply_config({"processing": {"data1_rate": 125.0}})
+
+        runtime.pause_processing.assert_called_once()
+        runtime.resume_processing.assert_called_once()
+        runtime.update_config.assert_called_once()
+        self.assertEqual(125.0, updated["processing"]["data1_rate"])
+        runtime._datalink.close()
+
     def test_runtime_update_config_does_not_restart_data_server_when_protocol_and_network_are_unchanged(self) -> None:
         runtime = RuntimeService(AppSettings())
         runtime._restart_data_server = Mock()  # type: ignore[method-assign]
@@ -1925,6 +1942,18 @@ class ProtocolTests(unittest.TestCase):
             stop_response = client.post("/api/processing/stop")
             self.assertEqual(200, stop_response.status_code)
             runtime.pause_processing.assert_called_once()
+
+        runtime._datalink.close()
+
+    def test_web_api_applies_config_with_restart(self) -> None:
+        runtime = RuntimeService(AppSettings())
+        runtime.apply_config = Mock(return_value=runtime.current_config())  # type: ignore[method-assign]
+        app = create_app(runtime)
+
+        with TestClient(app) as client:
+            response = client.post("/api/config", json={"processing": {"data1_rate": 250.0}})
+            self.assertEqual(200, response.status_code)
+            runtime.apply_config.assert_called_once()
 
         runtime._datalink.close()
 
