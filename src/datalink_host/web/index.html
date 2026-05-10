@@ -451,8 +451,8 @@
                   </div>
                 </div>
                 <div class="col-md-6">
-                  <label class="form-label fs-5" for="storage-station">文件存储名</label>
-                  <input id="storage-station" class="form-control form-control-lg" type="text" placeholder="NLSC">
+                  <label class="form-label fs-5" for="storage-station">文件名</label>
+                  <input id="storage-station" class="form-control form-control-lg" type="text" placeholder="输入保存文件名">
                 </div>
               </div>
             </section>
@@ -913,8 +913,8 @@
       els.data2Rate.value = processing.data2_rate ?? 10;
       els.storageEnabled.checked = Boolean(storage.enabled);
       els.storageRoot.value = storage.root || "";
-      els.storageDuration.value = storage.file_duration_seconds ?? 3600;
-      els.storageStation.value = storage.station || "NLSC";
+      els.storageDuration.value = storage.file_duration_seconds ?? 60;
+      els.storageStation.value = storage.station || "S0001";
       els.datalinkEnabled.checked = Boolean(datalink.enabled);
       els.datalinkHost.value = datalink.host || "";
       els.datalinkPort.value = datalink.port ?? "";
@@ -943,8 +943,8 @@
         storage: {
           enabled: els.storageEnabled.checked,
           root: els.storageRoot.value.trim() || "E:\\data",
-          file_duration_seconds: readNumber(els.storageDuration, "文件存储时间"),
-          station: els.storageStation.value.trim() || "NLSC",
+          file_duration_seconds: readNumber(els.storageDuration, "单文件时长"),
+          station: els.storageStation.value.trim() || "S0001",
         },
         datalink: {
           enabled: els.datalinkEnabled.checked,

@@ -652,7 +652,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._storage_duration_spin.setSingleStep(60)
         self._storage_duration_spin.setSuffix(" s")
         self._storage_station_edit = QtWidgets.QLineEdit(card)
-        self._storage_station_edit.setPlaceholderText("NLSC")
+        self._storage_station_edit.setPlaceholderText("输入保存文件名")
+        self._storage_station_edit.setToolTip("该名称会作为数据文件名中的主要标识。")
 
         path_row = QtWidgets.QHBoxLayout()
         path_row.addWidget(self._storage_root_edit, stretch=1)
@@ -664,7 +665,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form = QtWidgets.QFormLayout()
         form.addRow("存储路径", path_widget)
         form.addRow("文件存储时间", self._storage_duration_spin)
-        form.addRow("文件存储名", self._storage_station_edit)
+        form.addRow("文件名", self._storage_station_edit)
         layout.addLayout(form)
         layout.addStretch(1)
         return card
@@ -1177,7 +1178,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "enabled": self._storage_enabled_checkbox.isChecked(),
                 "root": self._storage_root_edit.text().strip() or r"E:\data",
                 "file_duration_seconds": self._storage_duration_spin.value(),
-                "station": self._storage_station_edit.text().strip() or "NLSC",
+                "station": self._storage_station_edit.text().strip() or "S0001",
             },
             "datalink": {
                 "enabled": self._datalink_enabled_checkbox.isChecked(),

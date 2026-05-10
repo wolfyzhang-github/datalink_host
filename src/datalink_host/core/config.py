@@ -51,11 +51,11 @@ class ProcessingSettings:
 class StorageSettings:
     enabled: bool = True
     root: Path = Path(r"E:\data")
-    file_duration_seconds: int = 3600
+    file_duration_seconds: int = 60
     output_data_type: str = "float32"
     int32_gain: float = DEFAULT_INT32_GAIN
     network: str = "SC"
-    station: str = "NLSC"
+    station: str = "S0001"
     location: str = "10"
     channel_codes: tuple[str, ...] = (
         "HSH",
