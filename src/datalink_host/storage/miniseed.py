@@ -186,8 +186,9 @@ class MiniSeedWriter:
         settings: StorageSettings,
     ) -> None:
         group_name, channel_index = key
-        output_dir = settings.root / f"{group_name.title()}-{channel_index + 1:02d}"
-        log_dir = settings.root / LOG_DIRECTORY_NAME
+        date_dir = settings.root / self._format_date(file_start_time)
+        output_dir = date_dir / f"{group_name.lower()}-{channel_index + 1:02d}"
+        log_dir = date_dir / LOG_DIRECTORY_NAME
         channel_code = settings.channel_codes[channel_index]
         timestamp = self._format_timestamp(file_start_time)
         filename = self._build_filename(
@@ -337,9 +338,19 @@ class MiniSeedWriter:
         parts[-1] = "log"
         log_filename = ".".join(parts)
         return [
-            (root / LOG_DIRECTORY_NAME / log_filename, True),
+            (MiniSeedWriter._shared_log_dir_for_mseed(path, root) / log_filename, True),
             (path.with_name(log_filename), False),
         ]
+
+    @staticmethod
+    def _shared_log_dir_for_mseed(path: Path, root: Path) -> Path:
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            return root / LOG_DIRECTORY_NAME
+        if len(relative.parts) >= 3 and relative.parts[0].isdigit() and len(relative.parts[0]) == 8:
+            return root / relative.parts[0] / LOG_DIRECTORY_NAME
+        return root / LOG_DIRECTORY_NAME
 
     @staticmethod
     def _mseed_timestamp(path: Path) -> str | None:
@@ -368,3 +379,9 @@ class MiniSeedWriter:
         seconds, micros = divmod(timestamp.ns // 1000, 1_000_000)
         dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
         return dt.strftime("%Y%m%d%H%M%S") + f"{micros // 1000:03d}"
+
+    @staticmethod
+    def _format_date(timestamp: UTCDateTime) -> str:
+        seconds = timestamp.ns // 1_000_000_000
+        dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
+        return dt.strftime("%Y%m%d")

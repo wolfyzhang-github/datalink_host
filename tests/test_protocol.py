@@ -376,6 +376,9 @@ class ProtocolTests(unittest.TestCase):
                     "ack_required": False,
                     "send_data2": True,
                 },
+                "web": {
+                    "port": 18181,
+                },
             }
         )
 
@@ -388,6 +391,8 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(18000, updated["datalink"]["port"])
         self.assertFalse(updated["datalink"]["ack_required"])
         self.assertTrue(updated["datalink"]["send_data2"])
+        self.assertEqual(18181, updated["web"]["port"])
+        self.assertIn("access_url", updated["web"])
         runtime._datalink.close()
 
     def test_data_server_logs_when_connected_without_payload(self) -> None:
@@ -552,8 +557,8 @@ class ProtocolTests(unittest.TestCase):
             writer.write(frame)
             writer.close()
 
-            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
-            data2_files = sorted(Path(tmpdir).glob("Data2-*/*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("*/data1-*/*.mseed"))
+            data2_files = sorted(Path(tmpdir).glob("*/data2-*/*.mseed"))
             self.assertEqual(8, len(data1_files))
             self.assertEqual(8, len(data2_files))
 
@@ -577,11 +582,12 @@ class ProtocolTests(unittest.TestCase):
             writer.write(frame)
             writer.close()
 
-            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("*/data1-*/*.mseed"))
             self.assertTrue(data1_files)
+            self.assertEqual(Path(tmpdir) / "20231114" / "data1-01", data1_files[0].parent)
             expected_name = "SC.S0001.20231114221320123.R.10.HSH.mseed"
             self.assertEqual(expected_name, data1_files[0].name)
-            log_file = Path(tmpdir) / "log" / "SC.S0001.20231114221320123.R.10.LOG.log"
+            log_file = Path(tmpdir) / "20231114" / "log" / "SC.S0001.20231114221320123.R.10.LOG.log"
             self.assertTrue(log_file.is_file())
             self.assertIn("# MiniSEED sidecar log", log_file.read_text(encoding="utf-8"))
             stream = read(str(data1_files[0]))
@@ -619,7 +625,7 @@ class ProtocolTests(unittest.TestCase):
             )
 
             writer.write(first_frame)
-            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("*/data1-*/*.mseed"))
             self.assertEqual(1, len(data1_files))
             first_size = data1_files[0].stat().st_size
             first_stream = read(str(data1_files[0]))
@@ -628,7 +634,7 @@ class ProtocolTests(unittest.TestCase):
             writer.write(second_frame)
             writer.close()
 
-            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("*/data1-*/*.mseed"))
             self.assertEqual(1, len(data1_files))
             self.assertGreater(data1_files[0].stat().st_size, first_size)
             stream = read(str(data1_files[0]))
@@ -664,7 +670,7 @@ class ProtocolTests(unittest.TestCase):
             writer.write(frame)
             writer.close()
 
-            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("*/data1-*/*.mseed"))
             self.assertEqual(1, len(data1_files))
             stream = read(str(data1_files[0]))
             self.assertEqual(np.dtype("int32"), stream[0].data.dtype)
@@ -730,7 +736,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertFalse(old_mseed.exists())
             self.assertFalse(old_log.exists())
             self.assertFalse(shared_old_log.exists())
-            new_files = sorted(root.glob("Data1-*/*.mseed"))
+            new_files = sorted(root.glob("*/data1-*/*.mseed"))
             self.assertEqual(1, len(new_files))
             self.assertNotEqual(old_mseed.name, new_files[0].name)
 
@@ -755,7 +761,7 @@ class ProtocolTests(unittest.TestCase):
                 writer.write(frame)
             writer.close()
 
-            data1_files = sorted(Path(tmpdir).glob("Data1-*/*.mseed"))
+            data1_files = sorted(Path(tmpdir).glob("*/data1-*/*.mseed"))
             self.assertEqual(2, len(data1_files))
             first_stream = read(str(data1_files[0]))
             second_stream = read(str(data1_files[1]))
@@ -1059,7 +1065,7 @@ class ProtocolTests(unittest.TestCase):
             for group_name, sample_rate in (("data1", 100.0), ("data2", 10.0)):
                 for channel_index in range(6):
                     storage_path = (
-                        Path(tmpdir) / f"{group_name.title()}-{channel_index + 1:02d}"
+                        Path(tmpdir) / "20231114" / f"{group_name}-{channel_index + 1:02d}"
                     )
                     storage_files = sorted(storage_path.glob("*.mseed"))
                     self.assertEqual(1, len(storage_files))
@@ -2033,6 +2039,8 @@ class ProtocolTests(unittest.TestCase):
             self.assertIsInstance(status_payload["storage_disk_total_bytes"], int)
             self.assertIsInstance(status_payload["storage_disk_usage_percent"], float)
             self.assertIn("baseline_length_meters", status_payload)
+            self.assertIn("device_ip", status_payload)
+            self.assertEqual(18080, status_payload["device_port"])
 
             logs_payload = client.get("/api/logs?limit=50&level=error").json()["payload"]
             self.assertTrue(any("web-log-check" in line for line in logs_payload["lines"]))

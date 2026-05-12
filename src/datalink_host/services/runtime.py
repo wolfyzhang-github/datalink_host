@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import logging
 import queue
 import threading
@@ -14,6 +15,7 @@ import numpy as np
 
 from datalink_host.core.clock import set_wall_time_provider, wall_time
 from datalink_host.core.config import AppSettings
+from datalink_host.core.network import access_host_for_bind_host
 from datalink_host.core.output_encoding import normalize_int32_gain, normalize_output_data_type
 from datalink_host.core.validation import (
     parse_choice,
@@ -158,6 +160,17 @@ class RuntimeService:
         self._last_timestamp_resolution_warning_key: tuple[str, str | None] | None = None
         self._pending_initial_gnss_timestamp_wait = True
         self._cold_start_started_at_monotonic = time.monotonic()
+        self._config_listeners: list[Callable[[set[str]], None]] = []
+
+    def add_config_listener(self, listener: Callable[[set[str]], None]) -> None:
+        self._config_listeners.append(listener)
+
+    def _notify_config_listeners(self, changed_sections: set[str]) -> None:
+        for listener in list(self._config_listeners):
+            try:
+                listener(set(changed_sections))
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Runtime configuration listener failed")
 
     def _build_data_server(self) -> TcpDataServer:
         return TcpDataServer(
@@ -293,6 +306,7 @@ class RuntimeService:
 
     def current_config(self) -> dict[str, Any]:
         with self._lock:
+            web_access_host = access_host_for_bind_host(self._settings.web.host)
             return {
                 "processing": {
                     "data1_rate": self._settings.processing.data1_rate,
@@ -348,6 +362,13 @@ class RuntimeService:
                 "capture": {
                     "enabled": self._settings.capture.enabled,
                     "path": str(self._settings.capture.path),
+                },
+                "web": {
+                    "enabled": self._settings.web.enabled,
+                    "host": self._settings.web.host,
+                    "port": self._settings.web.port,
+                    "access_host": web_access_host,
+                    "access_url": f"http://{web_access_host}:{self._settings.web.port}",
                 },
             }
 
@@ -425,6 +446,17 @@ class RuntimeService:
                     **({"path": payload["capture_path"]} if "capture_path" in payload else {}),
                 },
             }
+        if any(key in payload for key in ("web_enabled", "web_host", "web_port")):
+            payload = {
+                **payload,
+                "web": {
+                    **payload.get("web", {}),
+                    **({"enabled": payload["web_enabled"]} if "web_enabled" in payload else {}),
+                    **({"host": payload["web_host"]} if "web_host" in payload else {}),
+                    **({"port": payload["web_port"]} if "web_port" in payload else {}),
+                },
+            }
+        changed_sections: set[str] = set()
         with self._lock:
             processing = payload.get("processing", {})
             protocol = payload.get("protocol", {})
@@ -433,6 +465,7 @@ class RuntimeService:
             datalink = payload.get("datalink", {})
             gnss = payload.get("gnss", {})
             capture = payload.get("capture", {})
+            web = payload.get("web", {})
             restart_data_server = False
 
             if "data1_rate" in processing or "data2_rate" in processing:
@@ -636,10 +669,29 @@ class RuntimeService:
                     self._capture = PacketCaptureWriter(self._settings.capture.path)
                 self._snapshot.capture_enabled = self._settings.capture.enabled
 
+            if web:
+                web_changed = False
+                if "enabled" in web:
+                    enabled = bool(web["enabled"])
+                    web_changed = web_changed or enabled != self._settings.web.enabled
+                    self._settings.web.enabled = enabled
+                if "host" in web:
+                    host = str(web["host"]).strip() or "0.0.0.0"
+                    web_changed = web_changed or host != self._settings.web.host
+                    self._settings.web.host = host
+                if "port" in web:
+                    port = parse_port(web["port"], "web.port")
+                    web_changed = web_changed or port != self._settings.web.port
+                    self._settings.web.port = port
+                if web_changed:
+                    changed_sections.add("web")
+
             self._snapshot.updated_at = wall_time()
         if restart_data_server:
             self._restart_data_server()
         self._ensure_gnss_port_selected()
+        if changed_sections:
+            self._notify_config_listeners(changed_sections)
         return self.current_config()
 
     def apply_config(self, payload: dict[str, Any]) -> dict[str, Any]:

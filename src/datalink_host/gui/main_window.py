@@ -8,6 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from datalink_host.core.config import AppSettings
 from datalink_host.core.logging import get_recent_logs
+from datalink_host.core.network import access_host_for_bind_host
 from datalink_host.models.messages import RuntimeSnapshot
 from datalink_host.services.runtime import RuntimeService, downsample_for_plot, slice_for_plot
 
@@ -200,6 +201,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._gnss_last_error_label: QtWidgets.QLabel | None = None
         self._remote_web_label: QtWidgets.QLabel | None = None
         self._remote_control_label: QtWidgets.QLabel | None = None
+        self._basic_device_ip_label: QtWidgets.QLabel | None = None
+        self._basic_device_port_label: QtWidgets.QLabel | None = None
+        self._web_port_spin: QtWidgets.QSpinBox | None = None
 
         self.setWindowTitle("高精度长基线光纤应变信号解调软件")
         self.statusBar().showMessage("就绪")
@@ -270,12 +274,13 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.setVerticalSpacing(16)
         cards = [
             self._build_basic_info_card(container),
+            self._build_datalink_status_card(container),
             self._build_gnss_status_card(container),
             self._build_storage_status_card(container),
         ]
         for index, card in enumerate(cards):
-            grid.addWidget(card, 0, index)
-        for column in range(3):
+            grid.addWidget(card, index // 2, index % 2)
+        for column in range(2):
             grid.setColumnStretch(column, 1)
         layout.addLayout(grid)
         layout.addStretch(1)
@@ -577,11 +582,38 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(card)
         layout.setSpacing(10)
 
+        self._basic_device_ip_label = _status_value_label(card)
+        self._basic_device_port_label = _status_value_label(card)
         form = QtWidgets.QFormLayout()
-        form.addRow("设备 IP", self._static_value_label("10.6.12.214", card))
-        form.addRow("设备端口", self._static_value_label("18080", card))
+        form.addRow("设备 IP", self._basic_device_ip_label)
+        form.addRow("设备端口", self._basic_device_port_label)
         form.addRow("采样率1", self._create_snapshot_label("data1_rate", card))
         form.addRow("采样率2", self._create_snapshot_label("data2_rate", card))
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return card
+
+    def _build_datalink_status_card(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        card = self._panel_card("远程传输状态", parent)
+        layout = QtWidgets.QVBoxLayout(card)
+        layout.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(QtWidgets.QLabel("远传连接情况", card))
+        lamp = IndicatorLamp(card)
+        self._register_lamp("datalink_connected", lamp)
+        header.addWidget(lamp)
+        header.addStretch(1)
+        header.addWidget(self._create_snapshot_label("datalink_connected", card))
+        layout.addLayout(header)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("远传开关", self._create_snapshot_label("datalink_enabled", card))
+        form.addRow("重连次数", self._create_snapshot_label("datalink_reconnects", card))
+        form.addRow("传输数据包", self._create_snapshot_label("datalink_packets_sent", card))
+        form.addRow("传输字节", self._create_snapshot_label("datalink_bytes_sent", card))
+        form.addRow("发布队列", self._create_snapshot_label("datalink_publish_queue_depth", card))
+        form.addRow("远传错误", self._create_snapshot_label("datalink_last_error", card))
         layout.addLayout(form)
         layout.addStretch(1)
         return card
@@ -680,11 +712,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._datalink_host_edit = QtWidgets.QLineEdit(card)
         self._datalink_port_spin = QtWidgets.QSpinBox(card)
         self._datalink_port_spin.setRange(1, 65535)
+        self._web_port_spin = QtWidgets.QSpinBox(card)
+        self._web_port_spin.setRange(1, 65535)
 
         layout.addWidget(self._datalink_enabled_checkbox)
         form = QtWidgets.QFormLayout()
         form.addRow("远程 IP", self._datalink_host_edit)
         form.addRow("远程端口", self._datalink_port_spin)
+        form.addRow("网页访问端口", self._web_port_spin)
         layout.addLayout(form)
         layout.addStretch(1)
         return card
@@ -1048,10 +1083,12 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
+        assert self._web_port_spin is not None
 
         processing = config["processing"]
         storage = config["storage"]
         datalink = config["datalink"]
+        web = config["web"]
 
         self._data1_rate_spin.setValue(processing["data1_rate"])
         self._data2_rate_spin.setValue(processing["data2_rate"])
@@ -1064,6 +1101,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._datalink_enabled_checkbox.setChecked(datalink["enabled"])
         self._datalink_host_edit.setText(datalink["host"])
         self._datalink_port_spin.setValue(datalink["port"])
+        self._web_port_spin.setValue(web["port"])
         self._update_form_state()
         self._sync_mode_selectors()
 
@@ -1168,6 +1206,7 @@ class MainWindow(QtWidgets.QMainWindow):
         assert self._datalink_enabled_checkbox is not None
         assert self._datalink_host_edit is not None
         assert self._datalink_port_spin is not None
+        assert self._web_port_spin is not None
 
         payload = {
             "processing": {
@@ -1184,6 +1223,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "enabled": self._datalink_enabled_checkbox.isChecked(),
                 "host": self._datalink_host_edit.text().strip() or "10.2.12.61",
                 "port": self._datalink_port_spin.value(),
+            },
+            "web": {
+                "port": self._web_port_spin.value(),
             },
         }
         try:
@@ -1328,8 +1370,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._gnss_last_timestamp_label.setText(self._format_gnss_timestamp(snapshot.gnss_last_timestamp))
         if self._gnss_last_error_label is not None:
             self._gnss_last_error_label.setText(snapshot.gnss_last_error or "-")
+        web_access_host = access_host_for_bind_host(self._settings.web.host)
+        if self._basic_device_ip_label is not None:
+            self._basic_device_ip_label.setText(web_access_host)
+        if self._basic_device_port_label is not None:
+            self._basic_device_port_label.setText(str(self._settings.web.port))
         if self._remote_web_label is not None:
-            self._remote_web_label.setText(f"http://{self._settings.web.host}:{self._settings.web.port}")
+            self._remote_web_label.setText(f"http://{web_access_host}:{self._settings.web.port}")
         if self._remote_control_label is not None:
             self._remote_control_label.setText(f"{self._settings.control_server.host}:{self._settings.control_server.port}")
 

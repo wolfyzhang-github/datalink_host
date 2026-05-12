@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -15,10 +17,19 @@ from datalink_host.services.runtime import RuntimeService
 from datalink_host.services.web_ui import INDEX_HTML, web_assets_path
 
 
+LOGGER = logging.getLogger(__name__)
+WEB_RESTART_DELAY_SECONDS = 0.25
+
+
 def _status_payload(runtime: RuntimeService) -> dict[str, Any]:
     snapshot = runtime.snapshot()
+    config = runtime.current_config()
+    web_config = config.get("web", {})
     return {
         "processing_active": runtime.is_processing_active(),
+        "device_ip": web_config.get("access_host") or web_config.get("host"),
+        "device_port": web_config.get("port"),
+        "web_access_url": web_config.get("access_url"),
         "data_connected": snapshot.data_connected,
         "control_connected": snapshot.control_connected,
         "packets_received": snapshot.packets_received,
@@ -157,27 +168,80 @@ class WebApiService:
         self._settings = settings
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
+        self._service_lock = threading.RLock()
+        self._restart_thread: threading.Thread | None = None
+        self._active_settings: tuple[bool, str, int] = (False, settings.host, settings.port)
+        self._started_once = False
+        self._shutdown_requested = False
+        self._runtime.add_config_listener(self._on_runtime_config_updated)
 
     def start(self) -> None:
-        if not self._settings.enabled or self._thread is not None:
-            return
-        app = create_app(self._runtime)
-        config = uvicorn.Config(
-            app,
-            host=self._settings.host,
-            port=self._settings.port,
-            log_config=None,
-            log_level="info",
-            access_log=False,
-        )
-        self._server = uvicorn.Server(config)
-        self._thread = threading.Thread(target=self._server.run, name="web-api-server", daemon=True)
-        self._thread.start()
+        with self._service_lock:
+            self._shutdown_requested = False
+            self._started_once = True
+            if not self._settings.enabled:
+                self._active_settings = (False, self._settings.host, self._settings.port)
+                return
+            if self._thread is not None:
+                return
+            app = create_app(self._runtime)
+            config = uvicorn.Config(
+                app,
+                host=self._settings.host,
+                port=self._settings.port,
+                log_config=None,
+                log_level="info",
+                access_log=False,
+            )
+            self._server = uvicorn.Server(config)
+            self._thread = threading.Thread(target=self._server.run, name="web-api-server", daemon=True)
+            self._thread.start()
+            self._active_settings = (self._settings.enabled, self._settings.host, self._settings.port)
 
     def stop(self) -> None:
-        if self._server is not None:
-            self._server.should_exit = True
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-        self._server = None
-        self._thread = None
+        self._stop(restarting=False)
+
+    def _stop(self, *, restarting: bool) -> None:
+        with self._service_lock:
+            if not restarting:
+                self._shutdown_requested = True
+            if self._server is not None:
+                self._server.should_exit = True
+            if self._thread is not None and self._thread is not threading.current_thread():
+                self._thread.join(timeout=2.0)
+            self._server = None
+            self._thread = None
+            self._active_settings = (False, self._settings.host, self._settings.port)
+
+    def _on_runtime_config_updated(self, changed_sections: set[str]) -> None:
+        if "web" not in changed_sections:
+            return
+        desired = (self._settings.enabled, self._settings.host, self._settings.port)
+        with self._service_lock:
+            if not self._started_once or self._shutdown_requested or desired == self._active_settings:
+                return
+            if self._restart_thread is not None and self._restart_thread.is_alive():
+                return
+            self._restart_thread = threading.Thread(
+                target=self._restart_after_config_change,
+                name="web-api-restart",
+                daemon=True,
+            )
+            self._restart_thread.start()
+
+    def _restart_after_config_change(self) -> None:
+        time.sleep(WEB_RESTART_DELAY_SECONDS)
+        with self._service_lock:
+            if self._shutdown_requested:
+                return
+        LOGGER.info(
+            "Restarting web API after configuration change: host=%s port=%s enabled=%s",
+            self._settings.host,
+            self._settings.port,
+            self._settings.enabled,
+        )
+        self._stop(restarting=True)
+        with self._service_lock:
+            if self._shutdown_requested:
+                return
+        self.start()

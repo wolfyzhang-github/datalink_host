@@ -100,7 +100,7 @@
 
     .status-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 28px;
     }
 
@@ -380,6 +380,19 @@
             </section>
 
             <section class="status-panel">
+              <span id="datalink-dot" class="status-dot"></span>
+              <h2 class="panel-title">远程传输状态</h2>
+              <div class="kv-list">
+                <div class="kv-row"><span class="kv-label">远传连接情况</span><span id="status-datalink-connected" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">重连次数</span><span id="status-datalink-reconnects" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">传输数据包</span><span id="status-datalink-packets" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">传输字节</span><span id="status-datalink-bytes" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">发布队列</span><span id="status-datalink-queue" class="kv-value">-</span></div>
+                <div class="kv-row"><span class="kv-label">远传错误</span><span id="status-datalink-error" class="kv-value">-</span></div>
+              </div>
+            </section>
+
+            <section class="status-panel">
               <span id="gnss-dot" class="status-dot"></span>
               <h2 class="panel-title">GNSS状态</h2>
               <div class="kv-list">
@@ -472,6 +485,12 @@
                 <div class="col-md-6">
                   <label class="form-label fs-5" for="datalink-port">远程传输端口</label>
                   <input id="datalink-port" class="form-control form-control-lg" type="number" min="1" max="65535">
+                </div>
+              </div>
+              <div class="row g-4 mt-1">
+                <div class="col-md-6">
+                  <label class="form-label fs-5" for="web-port">网页访问端口</label>
+                  <input id="web-port" class="form-control form-control-lg" type="number" min="1" max="65535">
                 </div>
               </div>
             </section>
@@ -621,12 +640,19 @@
       copyDownloadInfoBtn: document.getElementById("copy-download-info-btn"),
       settingsFeedback: document.getElementById("settings-feedback"),
       basicDot: document.getElementById("basic-dot"),
+      datalinkDot: document.getElementById("datalink-dot"),
       gnssDot: document.getElementById("gnss-dot"),
       diskDot: document.getElementById("disk-dot"),
       statusDeviceIp: document.getElementById("status-device-ip"),
       statusDevicePort: document.getElementById("status-device-port"),
       statusData1Rate: document.getElementById("status-data1-rate"),
       statusData2Rate: document.getElementById("status-data2-rate"),
+      statusDatalinkConnected: document.getElementById("status-datalink-connected"),
+      statusDatalinkReconnects: document.getElementById("status-datalink-reconnects"),
+      statusDatalinkPackets: document.getElementById("status-datalink-packets"),
+      statusDatalinkBytes: document.getElementById("status-datalink-bytes"),
+      statusDatalinkQueue: document.getElementById("status-datalink-queue"),
+      statusDatalinkError: document.getElementById("status-datalink-error"),
       statusSatellite: document.getElementById("status-satellite"),
       statusGnssSatellites: document.getElementById("status-gnss-satellites"),
       statusGnssTime: document.getElementById("status-gnss-time"),
@@ -654,6 +680,7 @@
       datalinkFields: document.getElementById("datalink-fields"),
       datalinkHost: document.getElementById("datalink-host"),
       datalinkPort: document.getElementById("datalink-port"),
+      webPort: document.getElementById("web-port"),
     };
 
     function initCharts() {
@@ -908,6 +935,7 @@
       const processing = config.processing || {};
       const storage = config.storage || {};
       const datalink = config.datalink || {};
+      const web = config.web || {};
 
       els.data1Rate.value = processing.data1_rate ?? 100;
       els.data2Rate.value = processing.data2_rate ?? 10;
@@ -918,14 +946,15 @@
       els.datalinkEnabled.checked = Boolean(datalink.enabled);
       els.datalinkHost.value = datalink.host || "";
       els.datalinkPort.value = datalink.port ?? "";
+      els.webPort.value = web.port ?? 18080;
       updateConfigStatus(config);
       updateFormState();
     }
 
     function updateConfigStatus(config) {
-      void config;
-      els.statusDeviceIp.textContent = "10.6.12.214";
-      els.statusDevicePort.textContent = "18080";
+      const web = config.web || {};
+      els.statusDeviceIp.textContent = web.access_host || web.host || "-";
+      els.statusDevicePort.textContent = web.port ? String(web.port) : "-";
     }
 
     async function loadConfigIntoForm() {
@@ -951,21 +980,47 @@
           host: els.datalinkHost.value.trim() || "10.2.12.61",
           port: readNumber(els.datalinkPort, "远程传输端口"),
         },
+        web: {
+          port: readNumber(els.webPort, "网页访问端口"),
+        },
       };
     }
 
     async function applyConfig() {
       try {
+        const payload = collectConfigPayload();
+        const oldPort = state.latestConfig && state.latestConfig.web ? Number(state.latestConfig.web.port) : null;
         await apiRequest("/api/config", {
           method: "POST",
-          body: JSON.stringify(collectConfigPayload()),
+          body: JSON.stringify(payload),
         });
         setAlert("配置已应用并重启接收。", "success");
+        if (maybeRedirectAfterWebPortChange(oldPort, payload.web.port)) {
+          return;
+        }
         await loadConfigIntoForm();
         await refreshMonitor();
       } catch (error) {
         setAlert(`应用配置失败: ${error.message}`, "danger");
       }
+    }
+
+    function maybeRedirectAfterWebPortChange(oldPort, newPort) {
+      if (!Number.isFinite(Number(newPort)) || Number(oldPort) === Number(newPort)) {
+        return false;
+      }
+      const hasHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
+      if (!hasHttpOrigin || !window.location.hostname) {
+        state.baseUrl = `http://${els.statusDeviceIp.textContent || "127.0.0.1"}:${newPort}`;
+        setAlert(`网页访问端口已改为 ${newPort}，后续请求将使用新端口。`, "success");
+        return true;
+      }
+      const targetUrl = `${window.location.protocol}//${window.location.hostname}:${newPort}${window.location.pathname}`;
+      setAlert(`网页访问端口已改为 ${newPort}，正在切换到新地址。`, "success");
+      window.setTimeout(() => {
+        window.location.href = targetUrl;
+      }, 900);
+      return true;
     }
 
     async function refreshMonitor(force = false) {
@@ -1015,8 +1070,16 @@
       const processingActive = Boolean(status.processing_active);
       const dataConnected = Boolean(status.data_connected);
       const diskUsage = Number(status.storage_disk_usage_percent);
+      els.statusDeviceIp.textContent = status.device_ip || els.statusDeviceIp.textContent || "-";
+      els.statusDevicePort.textContent = status.device_port ? String(status.device_port) : (els.statusDevicePort.textContent || "-");
       els.statusData1Rate.textContent = formatRate(status.data1_rate);
       els.statusData2Rate.textContent = formatRate(status.data2_rate);
+      els.statusDatalinkConnected.textContent = status.datalink_connected ? "已连接" : (status.datalink_enabled ? "未连接" : "未启用");
+      els.statusDatalinkReconnects.textContent = formatNumber(status.datalink_reconnects);
+      els.statusDatalinkPackets.textContent = formatNumber(status.datalink_packets_sent);
+      els.statusDatalinkBytes.textContent = formatBytes(status.datalink_bytes_sent);
+      els.statusDatalinkQueue.textContent = formatNumber(status.datalink_publish_queue_depth);
+      els.statusDatalinkError.textContent = status.datalink_last_error || status.datalink_publish_last_error || "-";
       els.statusSatellite.textContent = satelliteStatus(status);
       els.statusGnssSatellites.textContent = formatNumber(status.gnss_satellite_count);
       els.statusGnssTime.textContent = formatGnssTime(status.gnss_last_timestamp);
@@ -1028,6 +1091,7 @@
       els.statusStorageError.textContent = status.storage_last_error || "-";
 
       setDot(els.basicDot, dataConnected ? "ok" : (processingActive ? "warn" : ""));
+      setDot(els.datalinkDot, status.datalink_connected ? "ok" : (status.datalink_enabled ? "bad" : ""));
       setDot(els.gnssDot, status.gnss_connected ? "ok" : (status.gnss_enabled ? "warn" : ""));
       setDot(els.diskDot, !status.storage_enabled ? "" : (diskUsage >= 90 ? "bad" : (diskUsage >= 75 ? "warn" : "ok")));
 
